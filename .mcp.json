@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "svn": {
+      "command": "node",
+      "args": [
+        "--env-file=.env",
+        "dist/index.js"
+      ]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+# ホワイトリスト方式: ルート直下を全て無視し、明示的に許可したものだけ追跡する。
+# 新しいトップレベルのファイル/ディレクトリを追加した場合は、ここに ! 行を足すこと。
+
+# まずルート直下を全て無視（.env, dist/, node_modules/, .DS_Store, *.log なども含めて自動的に除外される）
+/*
+
+# 追跡対象（ルート直下）
+!/.gitignore
+!/.mcp.json
+!/.env.example
+!/LICENSE
+!/README.md
+!/package.json
+!/package-lock.json
+!/tsconfig.json
+!/src/
+!/docs/
+!/copilot-instructions.example.md
+# 注意: copilot-instructions.md / CLAUDE.md（実物）は環境固有の用語・運用を含むため
+# 追跡しない。テンプレート (.example.md) のみ追跡する。
