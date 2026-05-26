@@ -154,6 +154,23 @@ export class SvnClient {
   }
 
   /**
+   * 指定パスについて行ごとに「最後に変更したリビジョン・著者」を返す。
+   * revision を指定するとその時点での blame、省略時は HEAD。
+   */
+  async blame(
+    path: string,
+    opts: { revision?: number | "HEAD" } = {},
+  ): Promise<string> {
+    const args = ["blame"];
+    if (opts.revision != null) {
+      args.push("-r", String(opts.revision));
+    }
+    args.push(this.resolveUrl(path));
+    const r = await this.execSvn(args);
+    return r.stdout;
+  }
+
+  /**
    * 差分を取得する。指定方法は3通り:
    *  - changeRev のみ: 単一リビジョンの差分（svn diff -c REV）
    *  - fromRev + toRev: 範囲の差分（svn diff -r FROM:TO）

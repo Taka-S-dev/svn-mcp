@@ -12,6 +12,7 @@
 | [svn_log](#svn_log) | コミット履歴（path/limit/range/verbose） | [src/tools/svn-log.ts](../src/tools/svn-log.ts) |
 | [svn_cat](#svn_cat) | 指定リビジョンのファイル内容 | [src/tools/svn-cat.ts](../src/tools/svn-cat.ts) |
 | [svn_diff](#svn_diff) | unified diff（単一 or 範囲リビジョン） | [src/tools/svn-diff.ts](../src/tools/svn-diff.ts) |
+| [svn_blame](#svn_blame) | 行ごとの最終変更リビジョン・著者 | [src/tools/svn-blame.ts](../src/tools/svn-blame.ts) |
 | [show_diff_external](#show_diff_external) | 外部 GUI（WinMerge 等）で差分表示 | [src/tools/show-diff-external.ts](../src/tools/show-diff-external.ts) |
 | [show_log_tortoise](#show_log_tortoise) | TortoiseSVN のログダイアログを開く | [src/tools/show-log-tortoise.ts](../src/tools/show-log-tortoise.ts) |
 | [open_in_explorer](#open_in_explorer) | Windows エクスプローラで開く | [src/tools/open-in-explorer.ts](../src/tools/open-in-explorer.ts) |
@@ -322,6 +323,65 @@ r100〜HEAD の foo.cpp の累積差分
 
 - 大きなコミットの全差分は出力が膨大になる。`path` で絞るのが基本
 - バイナリファイルは `Cannot display: file marked as a binary type.` のような行になり、内容は出ない（svn の仕様）
+
+---
+
+## svn_blame
+
+### 何をするか
+
+指定パスについて **行ごとに「最後に変更したリビジョン・著者」** を返す（`svn blame PATH`）。
+
+「**このバグはいつ誰が入れた？**」「この行はなぜこうなっている？」を調べる定番。blame で判明したリビジョン番号を起点に `svn_log` / `svn_diff` / `svn_cat` を呼んで原因コミットを特定する流れ。
+
+### 引数
+
+| 名前 | 型 | 必須 | デフォルト | 説明 |
+|---|---|---|---|---|
+| `path` | string | ✓ | — | リポジトリ内の相対パス。テキストファイル限定 |
+| `revision` | integer (>0) or `"HEAD"` or 数字文字列 | — | `HEAD` | blame を取るリビジョン |
+
+### 返却値
+
+`svn blame` の生 stdout。例：
+
+```
+   140    alice  #include <stdio.h>
+   140    alice
+   142    bob    int main(int argc, char **argv) {
+   142    bob      const int TIMEOUT_MS = 30000;
+   138    alice    printf("hello\n");
+   142    bob      return 0;
+   140    alice  }
+```
+
+左から「リビジョン番号」「著者」「行内容」。
+
+### よく使うクエリ例
+
+```
+foo.cpp の 42 行目の責任者を知りたい
+→ svn_blame({ path: "trunk/src/foo.cpp" })
+→ 結果から 42 行目を見て、そのリビジョンを svn_log や svn_diff で深掘り
+
+過去のあるリビジョン時点での blame
+→ svn_blame({ path: "trunk/src/foo.cpp", revision: 100 })
+```
+
+### バグ調査の典型フロー
+
+```
+1. svn_blame で問題行の最終変更リビジョン X を特定
+2. svn_log({ from_rev: X, to_rev: X, verbose: true }) でそのコミットの内容を確認
+3. svn_diff({ change_rev: X, path: "..." }) で具体的な変更内容を見る
+4. 必要なら svn_cat で前後リビジョンのファイル全体を比較
+```
+
+### 注意
+
+- **バイナリファイルには使わない**: テキスト前提
+- **大きなファイルは重い**: svn 側で全履歴を辿るため、巨大ファイルは応答が遅い
+- 削除済みファイルは blame できない（過去リビジョン指定で対応可能）
 
 ---
 

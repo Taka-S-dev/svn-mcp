@@ -269,6 +269,7 @@ copilot         # または VSCode をそのフォルダで開く
 | `svn_log` | コミット履歴（path/limit/range/verbose 指定可） |
 | `svn_cat` | 指定リビジョンのファイル内容を取得 |
 | `svn_diff` | 単一リビジョン or 範囲の unified diff |
+| `svn_blame` | 行ごとに「最後に変更したリビジョン・著者」を表示（バグ調査の起点） |
 | `show_diff_external` | 2 リビジョン × ファイルを WinMerge 等で開く（人間向け） |
 | `show_log_tortoise` | 指定パスのログダイアログを TortoiseSVN で開く（人間向け） |
 | `open_in_explorer` | 作業コピー配下のパスを Windows エクスプローラで開く（人間向け） |
@@ -338,6 +339,7 @@ src/
     ├── svn-log.ts
     ├── svn-cat.ts
     ├── svn-diff.ts
+    ├── svn-blame.ts
     ├── show-diff-external.ts
     ├── show-log-tortoise.ts
     └── open-in-explorer.ts

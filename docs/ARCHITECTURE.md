@@ -45,6 +45,7 @@ src/
     ├── svn-log.ts             svn log
     ├── svn-cat.ts             svn cat
     ├── svn-diff.ts            svn diff
+    ├── svn-blame.ts           svn blame（行ごとの最終変更リビジョン・著者）
     ├── show-diff-external.ts  外部GUI（WinMerge 等）で差分表示
     ├── show-log-tortoise.ts   TortoiseSVN のログダイアログを開く
     └── open-in-explorer.ts    Windows エクスプローラで開く

@@ -30,6 +30,7 @@
 | あるパスの変更履歴 | `svn_log` `path` 指定・`limit: 10〜30`・`verbose: true` |
 | 特定リビジョンのコミット全体の差分 | `svn_diff` `change_rev` |
 | 特定リビジョン×特定ファイルの差分 | `svn_diff` `change_rev` + `path` |
+| **「このバグはいつ誰が入れた？」「この行はなぜこうなっている？」** | **`svn_blame`**（行ごとの最終変更リビジョン・著者） |
 | ファイル一覧（存在確認等） | `svn_list` |
 | 特定リビジョン時点のファイル内容 | `svn_cat` |
 | 人間に目視で差分を見せたい | `show_diff_external`（ユーザが明示的に「目で見たい」と言ったときだけ） |
@@ -61,6 +62,15 @@
 3. ファイル数が多ければ重要そうなファイルだけ svn_diff({ change_rev: N, path: "..." })
 ```
 
+#### バグの原因調査（責任リビジョン特定）
+
+```
+1. svn_blame({ path: "trunk/src/foo.cpp" }) で問題行の最終変更リビジョン X を特定
+2. svn_log({ from_rev: X, to_rev: X, verbose: true }) でそのコミットの内容を確認
+3. svn_diff({ change_rev: X, path: "..." }) で具体的な変更内容
+4. 必要なら svn_cat で前後リビジョンのファイル全体を比較
+```
+
 ### やってはいけないこと
 
 - **バイナリファイルに `svn_cat` を使わない** — UTF-8 として読まれるので文字化けする。`.png` `.exe` `.zip` 等は触らない
@@ -77,6 +87,8 @@
 - `svn-mcp は読み取り専用です。サブコマンド 'X' は許可されていません` → 書き込み操作を要求してしまっている。読み取りで代替できないか考える
 - `svn コマンドが Nms でタイムアウトしました` → `limit` を減らす、`path` で絞る、`recursive` を外す
 - `URL '...' non-existent in revision N` → パスかリビジョンの綴り違い。`svn_info` `svn_list` で存在確認
+- **`svn: E160013: Diff target '...' was not found in the repository at revisions 'A' and 'B'`** → 指定リビジョン範囲に対象ファイルが存在しなかった。**勝手に再試行せず**、まず `svn_log({ path: "<対象>", verbose: true })` で**そのファイルが触られたリビジョン**を特定してから、その範囲で `svn_diff` を再実行する。ファイルがまだ追加されていない／既に削除されている可能性もある
+- `Invalid input: Expected number, received string` 等の Zod エラー → リビジョンは整数（例: `12856`）か `"HEAD"` で渡す。数字だけの文字列 `"12856"` も自動変換されるが、`"v1.0"` 等のタグ名は不可
 
 ---
 
