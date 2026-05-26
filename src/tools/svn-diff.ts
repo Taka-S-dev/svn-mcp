@@ -1,27 +1,26 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { runSvn, errorResult, type ToolContext } from "./context.js";
+import {
+  runSvn,
+  errorResult,
+  revNumberSchema,
+  revOrHeadSchema,
+  type ToolContext,
+} from "./context.js";
 
 const inputShape = {
-  change_rev: z
-    .number()
-    .int()
-    .positive()
+  change_rev: revNumberSchema
     .optional()
     .describe(
       "単一リビジョンの差分を取りたい場合に指定（svn diff -c REV）。" +
-        "from_rev/to_rev を使う場合は不要。",
+        "from_rev/to_rev を使う場合は不要。数字だけの文字列 \"123\" も可。",
     ),
-  from_rev: z
-    .number()
-    .int()
-    .positive()
+  from_rev: revNumberSchema
     .optional()
-    .describe("範囲差分の開始リビジョン（to_rev と併用）。"),
-  to_rev: z
-    .union([z.number().int().positive(), z.literal("HEAD")])
+    .describe("範囲差分の開始リビジョン（to_rev と併用）。数字だけの文字列 \"123\" も可。"),
+  to_rev: revOrHeadSchema
     .optional()
-    .describe("範囲差分の終了リビジョン（from_rev と併用）。"),
+    .describe("範囲差分の終了リビジョン（from_rev と併用）。数字だけの文字列 \"123\" も可。"),
   path: z
     .string()
     .optional()

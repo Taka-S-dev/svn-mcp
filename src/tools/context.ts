@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { SvnError, type SvnClient } from "../svn/client.js";
 import type { DiffToolConfig } from "../external/diff-tool.js";
 import type { TortoiseConfig } from "../external/tortoise.js";
@@ -52,3 +53,26 @@ export async function runSvn(fn: () => Promise<string>): Promise<ToolResult> {
     throw err;
   }
 }
+
+/**
+ * LLM が誤って "12856" のような数字文字列を渡しても受け付ける number スキーマ。
+ * 数字だけの文字列は Number() で正の整数に変換、それ以外は素通り（後続スキーマで検証）。
+ */
+const coerceIntStringPreprocess = (v: unknown): unknown => {
+  if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+    return Number(v.trim());
+  }
+  return v;
+};
+
+/** 正の整数のリビジョン。"12856" のような文字列も受け付ける。 */
+export const revNumberSchema = z.preprocess(
+  coerceIntStringPreprocess,
+  z.number().int().positive(),
+);
+
+/** 正の整数のリビジョン または 'HEAD'。"12856" のような文字列も受け付ける。 */
+export const revOrHeadSchema = z.preprocess(
+  coerceIntStringPreprocess,
+  z.union([z.number().int().positive(), z.literal("HEAD")]),
+);

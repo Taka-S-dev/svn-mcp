@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { runSvn, type ToolContext } from "./context.js";
+import { runSvn, revOrHeadSchema, type ToolContext } from "./context.js";
 
 const inputShape = {
   path: z
@@ -26,17 +26,15 @@ const inputShape = {
       "true で各コミットの変更パス一覧（A/M/D）も付与する（svn log -v）。" +
         "対象ファイルを推測する用途では true が有用。",
     ),
-  from_rev: z
-    .union([z.number().int().positive(), z.literal("HEAD")])
+  from_rev: revOrHeadSchema
     .optional()
     .describe(
-      "範囲指定の開始リビジョン（例: 100 または 'HEAD'）。to_rev と併用。",
+      "範囲指定の開始リビジョン（例: 100 または 'HEAD'）。to_rev と併用。数字だけの文字列 \"100\" も可。",
     ),
-  to_rev: z
-    .union([z.number().int().positive(), z.literal("HEAD")])
+  to_rev: revOrHeadSchema
     .optional()
     .describe(
-      "範囲指定の終了リビジョン（例: 200 または 'HEAD'）。from_rev と併用。",
+      "範囲指定の終了リビジョン（例: 200 または 'HEAD'）。from_rev と併用。数字だけの文字列 \"200\" も可。",
     ),
 };
 

@@ -1,11 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { runSvn, type ToolContext } from "./context.js";
+import { runSvn, revOrHeadSchema, type ToolContext } from "./context.js";
 
 const inputShape = {
-  revision: z
-    .union([z.number().int().positive(), z.literal("HEAD")])
-    .describe("リビジョン番号、または 'HEAD'。"),
+  revision: revOrHeadSchema
+    .describe("リビジョン番号、または 'HEAD'。数字だけの文字列 \"12856\" も可。"),
   path: z
     .string()
     .describe(
