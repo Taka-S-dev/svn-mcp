@@ -10,9 +10,14 @@
  *   2. npm run build
  *   3. npm run smoke    （または node scripts/smoke-test.mjs）
  *
+ * 結果ステータス:
+ *   PASS - 正常に応答
+ *   SKIP - 実行するための環境変数が未設定（ツールが無効化されている）
+ *   FAIL - ツールが応答しない／エラー応答／期待外の動作
+ *
  * 終了コード:
- *   0 - 全テスト pass
- *   1 - いずれかのテストが fail
+ *   0 - FAIL ゼロ（PASS と SKIP のみ）
+ *   1 - いずれかのテストが FAIL
  *   2 - クラッシュ等
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -39,12 +44,20 @@ const EXPECTED_TOOLS = [
   "open_in_explorer",
 ];
 
+/**
+ * 「未設定エラー」を識別するパターン。
+ * 該当する errorResult は FAIL でなく SKIP として扱う。
+ * 各ツールが errorResult メッセージに含めている語と整合させること。
+ */
+const UNCONFIGURED_PATTERNS = [
+  /未設定/, // 「作業コピーが未設定」「TortoiseSVN が未設定」「外部差分ツールが未設定」
+];
+
 const results = [];
 
-function record(name, ok, detail) {
-  results.push({ name, ok, detail });
-  const mark = ok ? "PASS" : "FAIL";
-  console.log(`[${mark}] ${name}${detail ? " — " + detail : ""}`);
+function record(name, status, detail) {
+  results.push({ name, status, detail });
+  console.log(`[${status}] ${name}${detail ? " — " + detail : ""}`);
 }
 
 function previewText(text, max = 80) {
@@ -53,17 +66,25 @@ function previewText(text, max = 80) {
   return oneLine.length > max ? oneLine.slice(0, max) + "…" : oneLine;
 }
 
+function isUnconfiguredError(text) {
+  return UNCONFIGURED_PATTERNS.some((re) => re.test(text));
+}
+
 async function tryCall(client, name, args) {
   try {
     const r = await client.callTool({ name, arguments: args });
     const text = r?.content?.[0]?.text ?? "";
     if (r?.isError) {
-      record(name, false, previewText(text));
+      if (isUnconfiguredError(text)) {
+        record(name, "SKIP", previewText(text));
+      } else {
+        record(name, "FAIL", previewText(text));
+      }
     } else {
-      record(name, true, `${text.length} chars: ${previewText(text)}`);
+      record(name, "PASS", `${text.length} chars: ${previewText(text)}`);
     }
   } catch (err) {
-    record(name, false, err?.message ?? String(err));
+    record(name, "FAIL", err?.message ?? String(err));
   }
 }
 
@@ -87,9 +108,9 @@ async function main() {
 
   try {
     await client.connect(transport);
-    record("connect", true, "MCP handshake OK");
+    record("connect", "PASS", "MCP handshake OK");
   } catch (err) {
-    record("connect", false, err?.message ?? String(err));
+    record("connect", "FAIL", err?.message ?? String(err));
     process.exit(2);
   }
 
@@ -100,12 +121,12 @@ async function main() {
     registered = tools.map((t) => t.name);
     const missing = EXPECTED_TOOLS.filter((n) => !registered.includes(n));
     if (missing.length > 0) {
-      record("listTools", false, `missing: ${missing.join(", ")}`);
+      record("listTools", "FAIL", `missing: ${missing.join(", ")}`);
     } else {
-      record("listTools", true, `${registered.length} tools registered`);
+      record("listTools", "PASS", `${registered.length} tools registered`);
     }
   } catch (err) {
-    record("listTools", false, err?.message ?? String(err));
+    record("listTools", "FAIL", err?.message ?? String(err));
   }
 
   // 2. svn_describe（最重要：サーバ接続と構造把握）
@@ -120,11 +141,19 @@ async function main() {
   // 5. svn_log limit:1
   await tryCall(client, "svn_log", { limit: 1 });
 
-  // 6. find_path（WC 設定時のみ意味あり。設定無しなら errorResult が返る想定）
+  // 6. WC 系（SVN_WORKING_COPY 未設定なら自動的に SKIP になる）
   if (registered.includes("find_path")) {
-    // 単純な存在確認: 1 文字パターンで limit:1
     await tryCall(client, "find_path", { pattern: ".", limit: 1 });
   }
+  if (registered.includes("grep_in_repo")) {
+    await tryCall(client, "grep_in_repo", {
+      query: "the",
+      max_results: 1,
+    });
+  }
+
+  // GUI 起動系は smoke では呼ばない（GUI が立ち上がるため）
+  // SVN_TORTOISE_PROC / SVN_EXTERNAL_DIFF_TOOL の有無は startup ログで確認
 
   // 終了処理
   try {
@@ -134,15 +163,25 @@ async function main() {
   }
 
   // サマリ
+  const passed = results.filter((r) => r.status === "PASS").length;
+  const failed = results.filter((r) => r.status === "FAIL").length;
+  const skipped = results.filter((r) => r.status === "SKIP").length;
+
   console.log("");
-  const passed = results.filter((r) => r.ok).length;
-  const failed = results.filter((r) => !r.ok).length;
-  console.log(`Result: ${passed} passed, ${failed} failed`);
+  console.log(`Result: ${passed} passed, ${failed} failed, ${skipped} skipped`);
 
   if (failed > 0) {
     console.log("");
     console.log("Failed tests:");
-    for (const r of results.filter((r) => !r.ok)) {
+    for (const r of results.filter((r) => r.status === "FAIL")) {
+      console.log(`  - ${r.name}: ${r.detail ?? "(no detail)"}`);
+    }
+  }
+
+  if (skipped > 0) {
+    console.log("");
+    console.log("Skipped tests (環境変数で有効化できる):");
+    for (const r of results.filter((r) => r.status === "SKIP")) {
       console.log(`  - ${r.name}: ${r.detail ?? "(no detail)"}`);
     }
   }
