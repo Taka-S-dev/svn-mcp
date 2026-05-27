@@ -15,6 +15,7 @@
 !/tsconfig.json
 !/src/
 !/docs/
+!/scripts/
 !/copilot-instructions.example.md
 # 注意: copilot-instructions.md / CLAUDE.md（実物）は環境固有の用語・運用を含むため
 # 追跡しない。テンプレート (.example.md) のみ追跡する。
