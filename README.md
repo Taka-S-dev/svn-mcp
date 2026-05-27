@@ -128,6 +128,8 @@ SVN_TIMEOUT_MS=60000    # 既定 30000ms。大きなリポジトリで svn log/l
 
 ### 5. 動作確認
 
+#### 簡易（起動だけ）
+
 ```powershell
 npm run dev
 ```
@@ -137,6 +139,16 @@ stderr に以下のような行が出れば OK（stdin/stdout で MCP プロト�
 ```
 [svn-mcp] started (repo=file:///svn-repo/my-repo, docker=true)
 ```
+
+#### 推奨（疎通テスト）
+
+```powershell
+npm run build
+npm run smoke
+```
+
+MCP プロトコル経由で主要ツール（svn_describe / svn_info / svn_list / svn_log / find_path）を実際に呼び、PASS/FAIL を表示します。
+SVN サーバへの実接続まで含めた end-to-end 確認になるので、最初のセットアップやリファクタ後の確認に。
 
 `SVN_EXTERNAL_DIFF_TOOL` 未設定の場合は追加で次の行も出る：
 ```
@@ -263,13 +275,15 @@ copilot         # または VSCode をそのフォルダで開く
 
 | ツール | 用途 |
 |---|---|
-| `svn_describe` | リポジトリの URL・HEAD・トップレベル構造・利用可能ツールを一括取得（**セッション開始時にまず呼ぶ**） |
+| `svn_describe` | リポジトリの URL・HEAD・トップレベル構造・利用可能ツール・WC 最新性を一括取得（**セッション開始時にまず呼ぶ**） |
 | `svn_info` | リポジトリ/パスの info（HEAD revision など） |
 | `svn_list` | ファイル/ディレクトリ一覧（`-R` で再帰） |
 | `svn_log` | コミット履歴（path/limit/range/verbose 指定可） |
 | `svn_cat` | 指定リビジョンのファイル内容を取得 |
 | `svn_diff` | 単一リビジョン or 範囲の unified diff |
 | `svn_blame` | 行ごとに「最後に変更したリビジョン・著者」を表示（バグ調査の起点） |
+| `find_path` | WC 内のファイル名を高速検索（`SVN_WORKING_COPY` 設定時） |
+| `grep_in_repo` | WC 内のテキストファイルを grep（`SVN_WORKING_COPY` 設定時） |
 | `show_diff_external` | 2 リビジョン × ファイルを WinMerge 等で開く（人間向け） |
 | `show_log_tortoise` | 指定パスのログダイアログを TortoiseSVN で開く（人間向け） |
 | `open_in_explorer` | 作業コピー配下のパスを Windows エクスプローラで開く（人間向け） |
@@ -331,6 +345,8 @@ src/
 │   ├── diff-tool.ts      外部差分ツール起動（一時ファイル展開＋detached spawn）
 │   ├── tortoise.ts       TortoiseProc.exe 起動（detached spawn）
 │   └── explorer.ts       Windows エクスプローラ起動（detached spawn）
+├── wc/
+│   └── scanner.ts        作業コピーの walk・バイナリ判定ヘルパー
 └── tools/
     ├── context.ts                ツール共通基盤（ToolContext, textResult, jsonResult, errorResult, runSvn）
     ├── svn-describe.ts
@@ -340,6 +356,8 @@ src/
     ├── svn-cat.ts
     ├── svn-diff.ts
     ├── svn-blame.ts
+    ├── find-path.ts
+    ├── grep-in-repo.ts
     ├── show-diff-external.ts
     ├── show-log-tortoise.ts
     └── open-in-explorer.ts

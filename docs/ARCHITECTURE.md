@@ -37,6 +37,8 @@ src/
 │   ├── diff-tool.ts      外部差分ツール（WinMerge 等）の起動（一時ファイル展開＋detached spawn）
 │   ├── tortoise.ts       TortoiseProc.exe の起動（detached spawn）
 │   └── explorer.ts       Windows エクスプローラの起動（detached spawn・fs.statSync でファイル/フォルダ判定）
+├── wc/
+│   └── scanner.ts        作業コピーの再帰 walk・バイナリ判定ヘルパー（find_path / grep_in_repo が利用）
 └── tools/
     ├── context.ts             ツール共通基盤（ToolContext / textResult / jsonResult / errorResult / runSvn）
     ├── svn-describe.ts        セッション開始時に呼ぶ「自己紹介」ツール（info + list + ツール可用性）
@@ -46,6 +48,8 @@ src/
     ├── svn-cat.ts             svn cat
     ├── svn-diff.ts            svn diff
     ├── svn-blame.ts           svn blame（行ごとの最終変更リビジョン・著者）
+    ├── find-path.ts           WC 内ファイル名検索（高速）
+    ├── grep-in-repo.ts        WC 内テキスト grep（高速・バイナリスキップ）
     ├── show-diff-external.ts  外部GUI（WinMerge 等）で差分表示
     ├── show-log-tortoise.ts   TortoiseSVN のログダイアログを開く
     └── open-in-explorer.ts    Windows エクスプローラで開く

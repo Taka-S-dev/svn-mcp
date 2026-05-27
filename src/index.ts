@@ -14,6 +14,8 @@ import * as svnLog from "./tools/svn-log.js";
 import * as svnCat from "./tools/svn-cat.js";
 import * as svnDiff from "./tools/svn-diff.js";
 import * as svnBlame from "./tools/svn-blame.js";
+import * as findPath from "./tools/find-path.js";
+import * as grepInRepo from "./tools/grep-in-repo.js";
 import * as showDiffExternal from "./tools/show-diff-external.js";
 import * as showLogTortoise from "./tools/show-log-tortoise.js";
 import * as openInExplorer from "./tools/open-in-explorer.js";
@@ -110,6 +112,8 @@ async function main() {
   svnCat.register(server, ctx);
   svnDiff.register(server, ctx);
   svnBlame.register(server, ctx);
+  findPath.register(server, ctx);
+  grepInRepo.register(server, ctx);
   showDiffExternal.register(server, ctx);
   showLogTortoise.register(server, ctx);
   openInExplorer.register(server, ctx);

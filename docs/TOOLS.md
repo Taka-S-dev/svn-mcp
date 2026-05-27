@@ -13,6 +13,8 @@
 | [svn_cat](#svn_cat) | 指定リビジョンのファイル内容 | [src/tools/svn-cat.ts](../src/tools/svn-cat.ts) |
 | [svn_diff](#svn_diff) | unified diff（単一 or 範囲リビジョン） | [src/tools/svn-diff.ts](../src/tools/svn-diff.ts) |
 | [svn_blame](#svn_blame) | 行ごとの最終変更リビジョン・著者 | [src/tools/svn-blame.ts](../src/tools/svn-blame.ts) |
+| [find_path](#find_path) | WC 内のファイル名検索（要 SVN_WORKING_COPY） | [src/tools/find-path.ts](../src/tools/find-path.ts) |
+| [grep_in_repo](#grep_in_repo) | WC 内のテキスト grep（要 SVN_WORKING_COPY） | [src/tools/grep-in-repo.ts](../src/tools/grep-in-repo.ts) |
 | [show_diff_external](#show_diff_external) | 外部 GUI（WinMerge 等）で差分表示 | [src/tools/show-diff-external.ts](../src/tools/show-diff-external.ts) |
 | [show_log_tortoise](#show_log_tortoise) | TortoiseSVN のログダイアログを開く | [src/tools/show-log-tortoise.ts](../src/tools/show-log-tortoise.ts) |
 | [open_in_explorer](#open_in_explorer) | Windows エクスプローラで開く | [src/tools/open-in-explorer.ts](../src/tools/open-in-explorer.ts) |
@@ -187,8 +189,11 @@ src 配下を全て列挙（再帰）
 | `path` | string | — | リポジトリ全体 | リポジトリ内の相対パス。指定すると、そのパスへの変更履歴のみ |
 | `limit` | integer (>0) | — | なし（全件） | 取得コミット数の上限（`--limit N`）。履歴の長いファイルでは 20〜50 程度に絞る |
 | `verbose` | boolean | — | `false` | true で各コミットの変更パス一覧（A/M/D）も付与（`-v`） |
-| `from_rev` | integer or string | — | — | 範囲指定の開始リビジョン（`to_rev` と併用） |
+| `from_rev` | integer or string | — | — | 範囲指定の開始リビジョン（`to_rev` と併用。日付範囲とは排他） |
 | `to_rev` | integer or string | — | — | 範囲指定の終了リビジョン（例: `200` or `"HEAD"`） |
+| `from_date` | string (YYYY-MM-DD) | — | — | 日付範囲の開始（`to_date` と併用。リビジョン範囲とは排他） |
+| `to_date` | string (YYYY-MM-DD) | — | — | 日付範囲の終了 |
+| `message_contains` | string | — | — | コミットメッセージ／著者／変更パスの部分一致検索（`svn log --search`） |
 
 `from_rev` のみ／`to_rev` のみの片方指定でも、不足側はそれぞれ `1` / `HEAD` で補完される（`SvnClient.log` の挙動）。
 
@@ -220,13 +225,28 @@ r141 | bob | 2026-05-18 09:11:03 +0900 (Mon, 18 May 2026) | 1 line
 
 リポジトリ全体の最新 5 件
 → svn_log({ limit: 5 })
+
+チケット番号 #1234 を含むコミットを検索
+→ svn_log({ message_contains: "#1234" })
+
+日付範囲で絞り込み（チケット起票日付近）
+→ svn_log({ from_date: "2026-04-10", to_date: "2026-04-20", path: "trunk/src" })
+
+組み合わせ: trunk 配下で 4月のlogin関連のコミット
+→ svn_log({
+    path: "trunk",
+    message_contains: "login",
+    from_date: "2026-04-01",
+    to_date: "2026-04-30"
+  })
 ```
 
 ### 注意
 
 - `path` を指定すると、そのパスを touch していないコミットは出ない
 - `verbose=true` は出力が膨らむが、対象ファイルを推測する用途では有用
-- コミットメッセージからチケット番号やキーワードを取り出すのは呼び出し側（LLM）の責務
+- `message_contains` は **コミットメッセージ・著者・変更パス**を横断検索するので、author 名を渡しても効く（ただし他のフィールドにもマッチする可能性あり）
+- リビジョン範囲（`from_rev`/`to_rev`）と日付範囲（`from_date`/`to_date`）は**排他**。両方指定するとエラー
 
 ---
 
@@ -382,6 +402,156 @@ foo.cpp の 42 行目の責任者を知りたい
 - **バイナリファイルには使わない**: テキスト前提
 - **大きなファイルは重い**: svn 側で全履歴を辿るため、巨大ファイルは応答が遅い
 - 削除済みファイルは blame できない（過去リビジョン指定で対応可能）
+
+---
+
+## find_path
+
+### 何をするか
+
+作業コピー（ローカル WC）配下で **ファイル名を高速検索**する。「`foo.cpp` ってどこ？」を SVN サーバを叩かずに即答できる。
+
+`svn list -R` でリポジトリ全体を取得して LLM 側で grep するよりも高速・低トークン。
+
+### 引数
+
+| 名前 | 型 | 必須 | デフォルト | 説明 |
+|---|---|---|---|---|
+| `pattern` | string | ✓ | — | ファイル名の部分一致パターン（大小無視） |
+| `base` | string | — | WC 全体 | WC ルートからの相対起点（例: `trunk/src`） |
+| `limit` | integer | — | `50` | 返却件数上限（最大 500） |
+
+### 返却値
+
+```jsonc
+{
+  "wc_path": "C:\\path\\to\\wc",
+  "base": null,
+  "pattern": "foo.cpp",
+  "matches": [
+    { "path": "trunk/src/foo.cpp", "type": "file" },
+    { "path": "branches/release-1.0/src/foo.cpp", "type": "file" }
+  ],
+  "count": 2,
+  "files_scanned": 8421,
+  "truncated": false,
+  "note": null,
+  "warning": "WC ベースの検索です。最近 svn update してない場合、新規追加ファイルが出ない可能性あり。"
+}
+```
+
+### 前提
+
+- `SVN_WORKING_COPY` が設定されていること
+- WC が最新であること（新規追加ファイルを見つけたいなら `svn update` 必要）
+
+### よく使うクエリ例
+
+```
+foo.cpp ってどこ？
+→ find_path({ pattern: "foo.cpp" })
+
+config って名前のファイル全部
+→ find_path({ pattern: "config" })
+
+trunk/src 配下の cpp ファイルだけ
+→ find_path({ pattern: ".cpp", base: "trunk/src" })
+```
+
+### 注意
+
+- `.svn` ディレクトリは自動スキップ
+- 大文字小文字を区別しない（"FOO.cpp" でも "foo.cpp" でもヒット）
+
+---
+
+## grep_in_repo
+
+### 何をするか
+
+作業コピー（ローカル WC）内の **テキストファイルからキーワードを grep** する。「関数 `do_login` を呼んでる場所」「このエラーメッセージを出しているコード」を一発で特定。
+
+`svn` サーバを叩かないので高速。バイナリ・巨大ファイル（>2MB）は自動スキップ。
+
+### 引数
+
+| 名前 | 型 | 必須 | デフォルト | 説明 |
+|---|---|---|---|---|
+| `query` | string | ✓ | — | 検索文字列。`is_regex: true` で正規表現 |
+| `is_regex` | boolean | — | `false` | true で query を正規表現として解釈 |
+| `case_insensitive` | boolean | — | `false` | 大小無視 |
+| `path_filter` | string | — | — | ファイル名の部分一致フィルタ（例: `.cpp`） |
+| `base` | string | — | WC 全体 | 検索起点 |
+| `max_results` | integer | — | `100` | ヒット件数上限（最大 1000） |
+
+### 返却値
+
+```jsonc
+{
+  "wc_path": "C:\\path\\to\\wc",
+  "query": "do_login",
+  "is_regex": false,
+  "case_insensitive": false,
+  "path_filter": ".cpp",
+  "base": null,
+  "hits": [
+    { "path": "trunk/src/auth.cpp", "line": 42, "text": "void do_login(User &user) {" },
+    { "path": "trunk/src/main.cpp", "line": 100, "text": "  do_login(current_user);" }
+  ],
+  "hit_count": 2,
+  "files_scanned": 1234,
+  "skipped_binary": 89,
+  "skipped_large": 3,
+  "truncated": false,
+  "note": null,
+  "warning": "WC ベースの検索です。最近 svn update してない場合、最新の変更が反映されていない可能性あり。"
+}
+```
+
+### 前提
+
+- `SVN_WORKING_COPY` が設定されていること
+- WC が最新であること（古いと最近の変更が反映されない）
+
+### よく使うクエリ例
+
+```
+do_login の呼び出し箇所
+→ grep_in_repo({ query: "do_login" })
+
+"Connection refused" を出してる場所
+→ grep_in_repo({ query: "Connection refused" })
+
+cpp ファイルだけ正規表現で
+→ grep_in_repo({
+    query: "TODO|FIXME",
+    is_regex: true,
+    path_filter: ".cpp"
+  })
+
+trunk/src 配下で大小無視
+→ grep_in_repo({
+    query: "logger",
+    case_insensitive: true,
+    base: "trunk/src"
+  })
+```
+
+### スキップ条件
+
+| 種類 | 内容 |
+|---|---|
+| バイナリ拡張子 | `.exe` `.dll` `.png` `.pdf` `.zip` 等は拡張子で即スキップ |
+| 巨大ファイル | 2 MB 超 |
+| NUL バイト含む | 先頭 512 バイトに `\0` があればバイナリ判定 |
+| 長すぎる行 | 1 行が 500 文字超は minified 等とみなしスキップ |
+| `.svn/` 配下 | 常にスキップ |
+
+### 注意
+
+- 大規模リポジトリで「全 `path_filter` 無し + よくある単語」だと結果膨大に。なるべく絞る
+- 正規表現エラーは即エラー応答
+- 行表示は 200 文字までで `…` で切り詰め
 
 ---
 
