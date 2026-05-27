@@ -132,16 +132,31 @@ export class SvnClient {
       verbose?: boolean;
       fromRev?: number | string;
       toRev?: number | string;
+      /** YYYY-MM-DD。fromRev/toRev とは排他（呼び出し側でバリデーション）。 */
+      fromDate?: string;
+      toDate?: string;
+      /** svn log --search のパターン。コミットメッセージ・著者・パスを部分一致検索。 */
+      messageContains?: string;
     } = {},
   ): Promise<string> {
     const args = ["log"];
     if (opts.limit) args.push("--limit", String(opts.limit));
     if (opts.verbose) args.push("-v");
+
     if (opts.fromRev != null || opts.toRev != null) {
       const from = opts.fromRev ?? 1;
       const to = opts.toRev ?? "HEAD";
       args.push("-r", `${from}:${to}`);
+    } else if (opts.fromDate || opts.toDate) {
+      const from = opts.fromDate ? `{${opts.fromDate}}` : "1";
+      const to = opts.toDate ? `{${opts.toDate}}` : "HEAD";
+      args.push("-r", `${from}:${to}`);
     }
+
+    if (opts.messageContains) {
+      args.push("--search", opts.messageContains);
+    }
+
     args.push(this.resolveUrl(path));
     const r = await this.execSvn(args);
     return r.stdout;
