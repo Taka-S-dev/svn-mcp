@@ -27,6 +27,7 @@
 - **生の svn 出力を返す**: 各ツールは `svn` の stdout をテキストとしてそのまま返す。LLM は人間と同じテキストを読む
 - **Docker / 直接 両対応**: `.env` の `SVN_USE_DOCKER` で切替（既定 `true`）
 - **UTF-8 前提**: `svn_cat` の出力は UTF-8 として扱う。バイナリファイルには使わない
+- **パスは絶対 / 相対両対応**: `path` 引数は `'/' で始める`とリポジトリルート起点の絶対パス、`'/' なし`なら `SVN_REPO_URL` 起点の相対パスとして自動解決される。`svn log -v` の "Changed paths" 出力（`/branches/...` 形式）をそのまま使える
 
 ---
 
@@ -48,6 +49,8 @@ LLM が「どこに何があるか分からない」迷子状態になるのを�
 ```jsonc
 {
   "repo_url": "file:///svn-repo/my-repo",
+  "repository_root": "file:///svn-repo/my-repo",   // svn info の Repository Root
+  "repo_url_is_deep": false,                        // true なら SVN_REPO_URL がルートより深い位置
   "docker_mode": true,
   "head_revision": 142,
   "top_level": ["branches/", "tags/", "trunk/"],
@@ -409,7 +412,7 @@ foo.cpp の 42 行目の責任者を知りたい
 
 ### 何をするか
 
-作業コピー（ローカル WC）配下で **ファイル名を高速検索**する。「`foo.cpp` ってどこ？」を SVN サーバを叩かずに即答できる。
+作業コピー（ローカル WC）配下で **WC 相対パスを部分一致検索**する。ファイル名・フォルダ名・パスの任意の一部、どこを指定してもマッチする。「`foo.cpp` ってどこ？」「`src/external` 配下のファイル」を SVN サーバを叩かずに即答できる。
 
 `svn list -R` でリポジトリ全体を取得して LLM 側で grep するよりも高速・低トークン。
 
@@ -417,7 +420,7 @@ foo.cpp の 42 行目の責任者を知りたい
 
 | 名前 | 型 | 必須 | デフォルト | 説明 |
 |---|---|---|---|---|
-| `pattern` | string | ✓ | — | ファイル名の部分一致パターン（大小無視） |
+| `pattern` | string | ✓ | — | WC 相対パスの**部分一致**パターン（大小無視、`\` → `/` 正規化）。ファイル名・フォルダ名・パス全体のどこに含まれていても OK |
 | `base` | string | — | WC 全体 | WC ルートからの相対起点（例: `trunk/src`） |
 | `limit` | integer | — | `50` | 返却件数上限（最大 500） |
 
@@ -451,17 +454,39 @@ foo.cpp の 42 行目の責任者を知りたい
 foo.cpp ってどこ？
 → find_path({ pattern: "foo.cpp" })
 
-config って名前のファイル全部
-→ find_path({ pattern: "config" })
+サブパスで絞る
+→ find_path({ pattern: "src/external/foo.cpp" })
+
+外部由来のパスをそのまま投げる（prefix が WC に無くても末尾が一致すれば OK）
+→ find_path({ pattern: "XYZ/my-repo/extend/foo.cpp" })
+
+フォルダ配下を列挙
+→ find_path({ pattern: "extend/" })
 
 trunk/src 配下の cpp ファイルだけ
 → find_path({ pattern: ".cpp", base: "trunk/src" })
 ```
 
+### 重要な用途: 外部由来のパス正規化
+
+チケット管理ツール本文や会話で出てきたパス文字列（例: `XYZ/my-repo/extend/foo.cpp` のようにプロジェクト名 prefix 付き）を **そのまま投げて正規化**できる。
+
+```
+外部由来: "XYZ/my-repo/extend/foo.cpp"
+→ find_path({ pattern: "XYZ/my-repo/extend/foo.cpp" })
+→ パスの末尾「extend/foo.cpp」が WC 内のパスに含まれれば hit
+→ matches: [{ path: "trunk/src/extend/foo.cpp" }]   // 正しい WC 相対パス
+→ 以降の svn_log / svn_diff にはこれを使う → URL 二重化を根本的に回避
+```
+
+basename 抽出は不要（パスの任意部分一致なのでそのまま投げる）。詳しくは [copilot-instructions.example.md](../copilot-instructions.example.md) の「外部由来のパスは find_path で正規化してから使う」参照。
+
 ### 注意
 
 - `.svn` ディレクトリは自動スキップ
 - 大文字小文字を区別しない（"FOO.cpp" でも "foo.cpp" でもヒット）
+- `\` は自動で `/` に正規化されるので Windows 区切りでも OK
+- 短いパターン（`"src"` 等）だと大量ヒットしがち。基本は具体名でクエリ
 
 ---
 
