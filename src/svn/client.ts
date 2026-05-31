@@ -59,14 +59,55 @@ const READ_ONLY_SUBCOMMANDS = new Set([
  * すべてのメソッドは svn の生の文字列出力を返す。LLM はそのままテキストとして読める。
  */
 export class SvnClient {
+  /**
+   * リポジトリのルート URL（svn info の Repository Root）。
+   * 初回必要時に lazy-load してキャッシュ。'/' 始まりの絶対パスを解決するのに使う。
+   */
+  private repositoryRoot: string | null = null;
+
   constructor(public readonly config: SvnConfig) {}
 
-  /** リポジトリ内パス（例: trunk/src/foo.cpp）を完全 URL に解決する。 */
-  resolveUrl(path?: string): string {
+  /**
+   * Repository Root をキャッシュ済みなら返し、未取得なら svn info を叩いて取得＋キャッシュ。
+   *
+   * 呼び出し側が既に svn info の出力を持っていれば `infoText` に渡すと
+   * 余分な svn info 呼び出しをスキップする（svn_describe のような既取得ケース最適化）。
+   */
+  async getRepositoryRoot(infoText?: string): Promise<string> {
+    if (this.repositoryRoot) return this.repositoryRoot;
+    const text =
+      infoText ??
+      (await this.execSvn(["info", this.config.repoUrl.replace(/\/+$/, "")]))
+        .stdout;
+    const m = text.match(/^Repository Root:\s*(\S+)/m);
+    if (!m) {
+      throw new SvnError(
+        "Failed to extract 'Repository Root' from svn info output.",
+        { code: null, stderr: "", stdout: text },
+      );
+    }
+    this.repositoryRoot = m[1].replace(/\/+$/, "");
+    return this.repositoryRoot;
+  }
+
+  /**
+   * リポジトリ内パスを完全 URL に解決する。
+   *
+   * - path 省略: SVN_REPO_URL をそのまま返す
+   * - '/' 始まり: リポジトリルート起点の絶対パスとして解決（Repository Root + path）
+   *   例: '/branches/release-1.0/foo.c' → '<repo-root>/branches/release-1.0/foo.c'
+   *   svn log -v の "Changed paths" 出力をそのまま渡せる
+   * - それ以外: SVN_REPO_URL 起点の相対パスとして解決
+   *   例: 'extend/foo.c' → '<SVN_REPO_URL>/extend/foo.c'
+   */
+  async resolveUrl(path?: string): Promise<string> {
     const base = this.config.repoUrl.replace(/\/+$/, "");
     if (!path) return base;
-    const cleaned = path.replace(/^\/+/, "");
-    return `${base}/${cleaned}`;
+    if (path.startsWith("/")) {
+      const root = (await this.getRepositoryRoot()).replace(/\/+$/, "");
+      return root + path;
+    }
+    return `${base}/${path}`;
   }
 
   /**
@@ -110,7 +151,8 @@ export class SvnClient {
   // ===== 高レベル API =====
 
   async info(path?: string): Promise<string> {
-    const r = await this.execSvn(["info", this.resolveUrl(path)]);
+    const url = await this.resolveUrl(path);
+    const r = await this.execSvn(["info", url]);
     return r.stdout;
   }
 
@@ -120,7 +162,7 @@ export class SvnClient {
   ): Promise<string> {
     const args = ["list"];
     if (opts.recursive) args.push("-R");
-    args.push(this.resolveUrl(path));
+    args.push(await this.resolveUrl(path));
     const r = await this.execSvn(args);
     return r.stdout;
   }
@@ -157,13 +199,14 @@ export class SvnClient {
       args.push("--search", opts.messageContains);
     }
 
-    args.push(this.resolveUrl(path));
+    args.push(await this.resolveUrl(path));
     const r = await this.execSvn(args);
     return r.stdout;
   }
 
   async cat(revision: number | "HEAD", path: string): Promise<string> {
-    const args = ["cat", "-r", String(revision), this.resolveUrl(path)];
+    const url = await this.resolveUrl(path);
+    const args = ["cat", "-r", String(revision), url];
     const r = await this.execSvn(args);
     return r.stdout;
   }
@@ -180,7 +223,7 @@ export class SvnClient {
     if (opts.revision != null) {
       args.push("-r", String(opts.revision));
     }
-    args.push(this.resolveUrl(path));
+    args.push(await this.resolveUrl(path));
     const r = await this.execSvn(args);
     return r.stdout;
   }
@@ -203,7 +246,7 @@ export class SvnClient {
     } else if (opts.fromRev != null && opts.toRev != null) {
       args.push("-r", `${opts.fromRev}:${opts.toRev}`);
     }
-    args.push(this.resolveUrl(opts.path));
+    args.push(await this.resolveUrl(opts.path));
     const r = await this.execSvn(args);
     return r.stdout;
   }

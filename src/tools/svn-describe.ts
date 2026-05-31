@@ -30,6 +30,15 @@ export function register(server: McpServer, ctx: ToolContext) {
         const revMatch = info.match(/^Revision:\s*(\d+)/m);
         const headRevision = revMatch ? Number(revMatch[1]) : null;
 
+        // 取得済みの info を流用して Repository Root を解決＆SvnClient のキャッシュを充填。
+        // これで後続の '/' 始まりパス解決時に追加の svn info が走らない。
+        let repositoryRoot: string | null = null;
+        try {
+          repositoryRoot = await ctx.svn.getRepositoryRoot(info);
+        } catch {
+          // svn info に Repository Root 行が無いケースは想定外だが、describe を落とさず null を返す
+        }
+
         const topLevel = list
           .split(/\r?\n/)
           .map((s) => s.trim())
@@ -45,13 +54,24 @@ export function register(server: McpServer, ctx: ToolContext) {
           ? buildFreshnessInfo(wcRev, headRevision)
           : null;
 
-        // hint はレイアウト + WC freshness の両方を反映
+        // SVN_REPO_URL がリポルートより深い位置にある場合、絶対パス（'/' 始まり）の解決に repository_root が使われる
+        const repoUrlIsDeep =
+          repositoryRoot !== null &&
+          ctx.svn.config.repoUrl.replace(/\/+$/, "") !==
+            repositoryRoot.replace(/\/+$/, "");
+
+        // hint はレイアウト + URL 深さ + WC freshness の 3 つを反映
         const hintParts: string[] = [];
         hintParts.push(
           isStandardLayout
             ? "trunk / branches / tags の標準レイアウト。ファイル探索は通常 trunk/ 配下から始める。"
             : `非標準レイアウト（trunk=${hasTrunk}, branches=${hasBranches}, tags=${hasTags}）。top_level を見て構造を判断すること。`,
         );
+        if (repoUrlIsDeep) {
+          hintParts.push(
+            `SVN_REPO_URL はリポルート (${repositoryRoot}) より深い位置を指している。tool 引数 path には SVN_REPO_URL 起点の相対パス（例: 'extend/foo.c'）か、リポルート起点の絶対パス（例: '/branches/X/extend/foo.c'、'/' 始まりで svn log -v の出力をそのまま渡せる）を使う。両方とも自動で正しい URL に解決される。`,
+          );
+        }
         if (wcFreshness?.fresh === false && wcFreshness.behind_by != null) {
           hintParts.push(
             `WC が ${wcFreshness.behind_by} コミット遅れている。find_path / grep_in_repo の結果は古い可能性あり。svn update を推奨。`,
@@ -64,6 +84,8 @@ export function register(server: McpServer, ctx: ToolContext) {
 
         return jsonResult({
           repo_url: ctx.svn.config.repoUrl,
+          repository_root: repositoryRoot,
+          repo_url_is_deep: repoUrlIsDeep,
           docker_mode: ctx.svn.config.useDocker,
           head_revision: headRevision,
           top_level: topLevel,

@@ -97,8 +97,13 @@ svn/client.ts（svn コマンド実行）           external/diff-tool.ts（GUI 
 - **READ_ONLY_SUBCOMMANDS allowlist**: `info` / `list` / `ls` / `log` / `cat` / `diff` / `blame` / `praise` / `annotate` / `stat` / `status` / `help` / `--version` のみ通過。それ以外は `SvnError` で即拒否。`execSvn()` の冒頭でチェックされる
 - **Docker / 直接 切替** (`buildCommand`): `useDocker=true` なら `docker compose exec -T <service> svn ...`、`composeDir` を CWD に。`useDocker=false` ならホストの `svn` を直接 spawn
 - **タイムアウト** (`spawnAsync`): `timeoutMs` 経過で `child.kill()`、エラーに「タイムアウトしました」と明記
-- 高レベル API（`info` / `list` / `log` / `cat` / `diff`）。引数を `svn` の CLI 引数に組み立てるだけのシン層
-- `resolveUrl(path)`: 末尾スラッシュ・先頭スラッシュを正規化し、`repoUrl/<path>` を作る
+- 高レベル API（`info` / `list` / `log` / `cat` / `diff` / `blame`）。引数を `svn` の CLI 引数に組み立てるだけのシン層
+- **`resolveUrl(path)` の 2 形式対応** (async):
+  - 省略: `SVN_REPO_URL` を返す
+  - `'/' 始まり`: リポジトリルート起点（`getRepositoryRoot()` 経由）→ `<repo-root>/<path>`
+  - `'/' なし`: `SVN_REPO_URL` 起点 → `<SVN_REPO_URL>/<path>`
+  - `svn log -v` の "Changed paths" 出力（`/branches/X/...`）をそのまま渡せる
+- **`getRepositoryRoot()`**: 初回必要時に `svn info <SVN_REPO_URL>` を 1 回叩いて `Repository Root: ...` をパース→ `this.repositoryRoot` にキャッシュ。以後は再取得不要
 - 全メソッドは **svn の生の stdout 文字列をそのまま返す**（パースしない。LLM はテキストとして読める）
 
 ### `external/diff-tool.ts`
