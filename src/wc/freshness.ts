@@ -31,7 +31,7 @@ export function getLocalWcRevision(wcPath: string): Promise<number | null> {
 
     let child;
     try {
-      child = spawn("svn", ["info", wcPath], {
+      child = spawn("svn", ["info", "--non-interactive", wcPath], {
         shell: false,
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],

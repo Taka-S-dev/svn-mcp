@@ -125,7 +125,10 @@ export class SvnClient {
         { code: null, stderr: "", stdout: "" },
       );
     }
-    const { command, fullArgs } = this.buildCommand(args);
+    // ヘッドレスサーバなので対話的認証（ブラウザ/プロンプト）には絶対に入らせない。
+    // 資格情報が無ければプロンプトせず即エラーで返す。
+    const svnArgs = [subcommand, "--non-interactive", ...args.slice(1)];
+    const { command, fullArgs } = this.buildCommand(svnArgs);
     return spawnAsync(command, fullArgs, {
       cwd: this.config.useDocker ? this.config.composeDir : undefined,
       timeoutMs: this.config.timeoutMs,
