@@ -99,15 +99,31 @@ export class SvnClient {
    *   svn log -v の "Changed paths" 出力をそのまま渡せる
    * - それ以外: SVN_REPO_URL 起点の相対パスとして解決
    *   例: 'extend/foo.c' → '<SVN_REPO_URL>/extend/foo.c'
+   *
+   * 前処理:
+   * - 区切りを正規化（Windows 由来の '\\' を '/' に）
+   * - 相対パスの先頭セグメントが SVN_REPO_URL の末尾セグメントと重複する場合は 1 段だけ自動ストリップ。
+   *   外部由来パス（例: チケットの「修正ソースコード」欄）がリポ末尾セグメントを prefix に
+   *   含むと URL が二重化（.../src/src/...）して not found になるのを防ぐ。
+   *   注意: これはヒューリスティック（先頭1セグメントの完全一致のみ・境界判定あり）。
+   *   末尾セグメントと同名のディレクトリが実在する稀なケースでは誤ストリップしうるが、
+   *   その場合も WC/URL とも実体が無く not found で顕在化する（誤ったデータを黙って返すことはない）。
+   *   確実なのは find_path で WC 相対パスに正規化してから渡すこと。
    */
   async resolveUrl(path?: string): Promise<string> {
     const base = this.config.repoUrl.replace(/\/+$/, "");
     if (!path) return base;
-    if (path.startsWith("/")) {
+    const normalized = path.replace(/\\/g, "/");
+    if (normalized.startsWith("/")) {
       const root = (await this.getRepositoryRoot()).replace(/\/+$/, "");
-      return root + path;
+      return root + normalized;
     }
-    return `${base}/${path}`;
+    const lastSegment = base.split("/").pop() ?? "";
+    const rel =
+      lastSegment && normalized.startsWith(lastSegment + "/")
+        ? normalized.slice(lastSegment.length + 1)
+        : normalized;
+    return `${base}/${rel}`;
   }
 
   /**
