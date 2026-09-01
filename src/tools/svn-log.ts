@@ -15,9 +15,10 @@ const inputShape = {
     .int()
     .positive()
     .optional()
+    .default(50)
     .describe(
-      "返す最大コミット数（svn log --limit N）。デフォルトなし（全件）。" +
-        "履歴の長いファイルでは 20〜50 程度に絞ること。",
+      "返す最大コミット数（svn log --limit N）。既定 50。" +
+        "全件が必要な場合のみ大きな値を指定する。履歴の長いファイルは既定のままで十分なことが多い。",
     ),
   verbose: z
     .boolean()
@@ -83,6 +84,15 @@ export function register(server: McpServer, ctx: ToolContext) {
       if (hasRevRange && hasDateRange) {
         return errorResult(
           "from_rev/to_rev と from_date/to_date は同時に指定できません。どちらか一方を選んでください。",
+        );
+      }
+      // message_contains（svn log --search）を path・範囲とも無指定で使うと
+      // リポジトリ全体の全履歴をスキャンし、ヒットしないケースでタイムアウト→空結果になる。
+      // 少なくとも path か日付/リビジョン範囲で絞らせる。
+      if (args.message_contains && !args.path && !hasRevRange && !hasDateRange) {
+        return errorResult(
+          "message_contains をリポジトリ全体・全履歴に対して使うとタイムアウトする可能性があります。" +
+            "path（ファイル/ディレクトリ）で絞るか、from_date/to_date または from_rev/to_rev で範囲を限定してください。",
         );
       }
       return runSvn(() =>
