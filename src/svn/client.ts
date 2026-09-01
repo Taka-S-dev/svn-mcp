@@ -270,8 +270,11 @@ function spawnAsync(
       shell: false,
       windowsHide: true,
     });
-    let stdout = "";
-    let stderr = "";
+    // チャンクは Buffer のまま溜め、close 時に concat して一括で UTF-8 デコードする。
+    // チャンクごとに toString("utf8") すると、マルチバイト文字（日本語等）が
+    // チャンク境界で分割されたときに文字化けするため。
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -279,10 +282,10 @@ function spawnAsync(
     }, opts.timeoutMs);
 
     child.stdout?.on("data", (d: Buffer) => {
-      stdout += d.toString("utf8");
+      stdoutChunks.push(d);
     });
     child.stderr?.on("data", (d: Buffer) => {
-      stderr += d.toString("utf8");
+      stderrChunks.push(d);
     });
     child.on("error", (err) => {
       clearTimeout(timer);
@@ -296,6 +299,8 @@ function spawnAsync(
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (timedOut) {
         reject(
           new SvnError(
