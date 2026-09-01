@@ -28,6 +28,26 @@ export function jsonResult(data: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
 
+/**
+ * テキストを行範囲（1 始まり・end は含む）で切り出す。
+ * start/end とも未指定なら素通し。大きな svn cat / blame 出力を LLM に返す前に
+ * 目的行だけに絞ってトークンを節約する用途。
+ */
+export function sliceLines(
+  text: string,
+  start?: number,
+  end?: number,
+): { text: string; total: number; from: number; to: number; sliced: boolean } {
+  const lines = text.split(/\r?\n/);
+  const total = lines.length;
+  if (start == null && end == null) {
+    return { text, total, from: 1, to: total, sliced: false };
+  }
+  const from = Math.max(1, start ?? 1);
+  const to = Math.min(total, end ?? total);
+  return { text: lines.slice(from - 1, to).join("\n"), total, from, to, sliced: true };
+}
+
 export function errorResult(message: string, detail?: unknown): ToolResult {
   const body =
     detail !== undefined
