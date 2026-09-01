@@ -33,7 +33,7 @@ When the user asks about the SVN repository, use the following as a guide to wor
 | **Get an overview of the repository (call first)** | **`svn_describe`** |
 | Get the HEAD revision number | `svn_info` (lighter than `svn_log limit:1`) |
 | Change history of a path | `svn_log` with `path`, `limit: 10–30`, `verbose: true` |
-| **"Which commit fixed ticket #1234?"** | `svn_log({ message_contains: "#1234" })` (substring match on # numbers or any keyword) |
+| **"Which commit fixed ticket #1234?"** | `svn_log({ path: "trunk", message_contains: "#1234" })` (substring match on # numbers or any keyword; must be scoped by `path`, a revision range, or a date range) |
 | **Find commits around the date a ticket was filed** | `svn_log({ from_date: "2026-04-10", to_date: "2026-04-20" })` |
 | Full diff of a specific revision | `svn_diff` with `change_rev` |
 | Diff of a specific revision × a specific file | `svn_diff` with `change_rev` + `path` |
@@ -41,7 +41,7 @@ When the user asks about the SVN repository, use the following as a guide to wor
 | File listing (existence check, etc.) | `svn_list` |
 | **"Where is foo.cpp?" "Files under src/external" "Normalize an externally-sourced path"** | **`find_path`** (fast when a WC is available. Substring match on any part of the path. Vastly faster than `svn_list -R`) |
 | **"Where is do_login called?" "Which code emits this error message?"** | **`grep_in_repo`** (fast when a WC is available. Binaries skipped automatically) |
-| File contents at a specific revision | `svn_cat` |
+| File contents at a specific revision | `svn_cat` (`start_line` / `end_line` to return only part of a large file) |
 | Show a human the diff visually | `show_diff_external` (only when the user explicitly says they want to see it with their own eyes) |
 | Let a human review the log in TortoiseSVN | `show_log_tortoise` (when the user asks to "see it in TortoiseSVN", "check it myself", etc.) |
 | Open the file / folder in Windows Explorer | `open_in_explorer` (when the user asks to "open it in Explorer", "open the folder", "show me where the file is", etc.) |
@@ -118,7 +118,8 @@ Benefits:
    - Field names are environment-specific. First confirm the real field names with a metadata tool (describe_schema or similar)
 2. Normalize the target file's path string with find_path (see "Normalize externally-sourced paths with find_path" above)
    → yields a confirmed WC-relative path (e.g. "trunk/src/extend/foo.cpp")
-3. svn_log({ message_contains: "#1234" })  ← one shot if the # number is in the message
+3. svn_log({ path: "<normalized path>", message_contains: "#1234" })  ← one shot if the # number is in the message
+   (message_contains alone is rejected; scope it with path or a revision / date range)
 4. If no hit, narrow by a date range around the reference date:
    svn_log({
      path: "<normalized path>",

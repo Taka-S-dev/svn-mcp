@@ -191,7 +191,7 @@ Returns commit history via `svn log`.
 | Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `path` | string | — | whole repository | Relative path in the repository. When given, only the change history of that path |
-| `limit` | integer (>0) | — | none (all) | Upper bound on the number of commits (`--limit N`). For files with long histories, keep it around 20–50 |
+| `limit` | integer (>0) | — | `50` | Upper bound on the number of commits (`--limit N`). Pass a larger value only when the full history is really needed |
 | `verbose` | boolean | — | `false` | true to include the list of changed paths (A/M/D) for each commit (`-v`) |
 | `from_rev` | integer or string | — | — | Start revision of a range (used with `to_rev`. Mutually exclusive with the date range) |
 | `to_rev` | integer or string | — | — | End revision of a range (e.g. `200` or `"HEAD"`) |
@@ -200,6 +200,8 @@ Returns commit history via `svn log`.
 | `message_contains` | string | — | — | Substring search over commit message / author / changed paths (`svn log --search`) |
 
 If only one of `from_rev` / `to_rev` is given, the missing side is filled in with `1` / `HEAD` respectively (behavior of `SvnClient.log`).
+
+`message_contains` must be combined with at least one of `path`, a revision range, or a date range. Searching the whole repository over its entire history is rejected before svn runs, because `svn log --search` scans every revision and used to time out and come back as an empty result.
 
 ### Return value
 
@@ -230,8 +232,8 @@ All commits in a revision range (100–HEAD)
 The 5 most recent commits in the whole repository
 → svn_log({ limit: 5 })
 
-Search for commits containing ticket number #1234
-→ svn_log({ message_contains: "#1234" })
+Search for commits containing ticket number #1234 (scoped to a path)
+→ svn_log({ path: "trunk", message_contains: "#1234" })
 
 Narrow by date range (around the date a ticket was filed)
 → svn_log({ from_date: "2026-04-10", to_date: "2026-04-20", path: "trunk/src" })
@@ -270,10 +272,14 @@ Returns the file contents at the given revision via `svn cat -r REV PATH`.
 |---|---|---|---|---|
 | `revision` | integer (>0) or `"HEAD"` | ✓ | — | Revision number, or `"HEAD"` |
 | `path` | string | ✓ | — | Relative path in the repository (e.g. `trunk/src/foo.cpp`) |
+| `start_line` | integer (>0) | — | — | First line to return (1-based) |
+| `end_line` | integer (>0) | — | — | Last line to return (1-based, inclusive). Must not be smaller than `start_line` |
 
 ### Return value
 
 The file contents themselves (as UTF-8 text).
+
+When `start_line` / `end_line` is given, only that range is returned, preceded by a header line such as `# lines 40-60 of 312 (trunk/src/foo.cpp @ r142)`. The whole file is still fetched from svn; the slicing happens in the server before the text is returned.
 
 ### Common queries
 
@@ -283,12 +289,15 @@ foo.cpp at r142
 
 Latest version
 → svn_cat({ revision: "HEAD", path: "trunk/README.md" })
+
+Only lines 40–60 of a large file
+→ svn_cat({ revision: 142, path: "trunk/src/foo.cpp", start_line: 40, end_line: 60 })
 ```
 
 ### Notes
 
 - **Do not use on binary files**: the output is read as UTF-8, so images, executables, etc. become garbage
-- Large files produce large responses. If needed, narrow the line range on the caller side (svn has no line-range API, so the practice is to fetch the whole file and slice)
+- Large files produce large responses. Use `start_line` / `end_line` to return only the part you need (svn itself has no line-range option, so the full file is still read on the server side)
 - To cat a file at a revision after it was deleted, specify a revision number from before the deletion
 
 ---
@@ -364,10 +373,12 @@ The standard way to answer "**when and by whom was this bug introduced?**" or "w
 |---|---|---|---|---|
 | `path` | string | ✓ | — | Relative path in the repository. Text files only |
 | `revision` | integer (>0) or `"HEAD"` or digit string | — | `HEAD` | Revision at which to take the blame |
+| `start_line` | integer (>0) | — | — | First line to return (1-based). Blame lines map 1:1 to file lines, so this narrows to the neighborhood of the line in question |
+| `end_line` | integer (>0) | — | — | Last line to return (1-based, inclusive). Must not be smaller than `start_line` |
 
 ### Return value
 
-The raw stdout of `svn blame`. Example:
+The raw stdout of `svn blame`. With `start_line` / `end_line`, only that range is returned, preceded by a header line such as `# lines 40-60 of 312 (trunk/src/foo.cpp)`. Example:
 
 ```
    140    alice  #include <stdio.h>
@@ -404,7 +415,7 @@ Blame as of a past revision
 ### Notes
 
 - **Do not use on binary files**: text is assumed
-- **Large files are slow**: svn walks the entire history, so huge files respond slowly
+- **Large files are slow**: svn walks the entire history, so huge files respond slowly. `start_line` / `end_line` reduce the returned text, not the svn work
 - Deleted files cannot be blamed (work around by specifying a past revision)
 
 ---

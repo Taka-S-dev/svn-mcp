@@ -340,7 +340,8 @@ src/
 │   ├── tortoise.ts       Launch the SVN GUI client's log dialog (detached spawn)
 │   └── explorer.ts       Launch Windows Explorer (detached spawn)
 ├── wc/
-│   └── scanner.ts        Working-copy walk and binary-detection helpers
+│   ├── scanner.ts        Working-copy walk and binary-detection helpers
+│   └── freshness.ts      WC revision vs. repository HEAD check
 └── tools/
     ├── context.ts                Shared tool infrastructure (ToolContext, textResult, jsonResult, errorResult, runSvn)
     ├── svn-describe.ts

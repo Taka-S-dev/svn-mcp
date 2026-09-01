@@ -38,7 +38,8 @@ src/
 │   ├── tortoise.ts       Launch TortoiseProc.exe (detached spawn)
 │   └── explorer.ts       Launch Windows Explorer (detached spawn; file/folder detection via fs.statSync)
 ├── wc/
-│   └── scanner.ts        Recursive walk of the working copy and binary-detection helpers (used by find_path / grep_in_repo)
+│   ├── scanner.ts        Recursive walk of the working copy and binary-detection helpers (used by find_path / grep_in_repo)
+│   └── freshness.ts      Compare the WC revision with the repository HEAD (reported by svn_describe)
 └── tools/
     ├── context.ts             Shared tool infrastructure (ToolContext / textResult / jsonResult / errorResult / runSvn)
     ├── svn-describe.ts        "Self-introduction" tool called at session start (info + list + tool availability)
@@ -87,23 +88,26 @@ Using `svn_log` as an example:
 ## 5. Module responsibilities
 
 ### `index.ts`
-- Loads configuration from `.env` (`SVN_REPO_URL` / `SVN_USE_DOCKER` / `SVN_COMPOSE_DIR` / `SVN_DOCKER_SERVICE` / `SVN_TIMEOUT_MS` / `SVN_EXTERNAL_DIFF_TOOL`)
+- Loads configuration from `.env` (`SVN_REPO_URL` / `SVN_USE_DOCKER` / `SVN_COMPOSE_DIR` / `SVN_DOCKER_SERVICE` / `SVN_TIMEOUT_MS` / `SVN_EXTERNAL_DIFF_TOOL` / `SVN_TORTOISE_PROC` / `SVN_REPO_URL_CLIENT` / `SVN_WORKING_COPY`)
 - Throws at startup on inconsistent configuration (`SVN_REPO_URL` unset, `SVN_USE_DOCKER=true` without `SVN_COMPOSE_DIR`, etc.)
-- Creates `SvnClient` and `DiffToolConfig` and assembles the `ToolContext`
+- Creates `SvnClient` and the optional `DiffToolConfig` / `TortoiseConfig` / `ExplorerConfig` and assembles the `ToolContext`
 - Calls each tool's `register(server, ctx)`
 - **When adding a tool, add the import and register call here**
 
 ### `svn/client.ts`
 - **READ_ONLY_SUBCOMMANDS allowlist**: only `info` / `list` / `ls` / `log` / `cat` / `diff` / `blame` / `praise` / `annotate` / `stat` / `status` / `help` / `--version` pass. Anything else is rejected immediately with `SvnError`. Checked at the top of `execSvn()`
 - **Docker / direct switch** (`buildCommand`): with `useDocker=true`, runs `docker compose exec -T <service> svn ...` with `composeDir` as the CWD. With `useDocker=false`, spawns the host's `svn` directly
-- **Timeout** (`spawnAsync`): after `timeoutMs`, `child.kill()` and the error explicitly says it timed out
+- **Always non-interactive**: `execSvn()` inserts `--non-interactive` after the subcommand, so a missing credential fails immediately with svn's error instead of hanging the headless server on a prompt
+- **Timeout** (`spawnAsync`): after `timeoutMs`, `child.kill()` and the error explicitly says it timed out. stdout/stderr are collected as `Buffer` chunks and decoded once on close, so multibyte characters split across chunks are not garbled
 - High-level API (`info` / `list` / `log` / `cat` / `diff` / `blame`). A thin layer that only assembles `svn` CLI arguments
 - **`resolveUrl(path)` supports two forms** (async):
   - Omitted: returns `SVN_REPO_URL`
   - Starts with `'/'`: relative to the repository root (via `getRepositoryRoot()`) → `<repo-root>/<path>`
   - No leading `'/'`: relative to `SVN_REPO_URL` → `<SVN_REPO_URL>/<path>`
   - The "Changed paths" output of `svn log -v` (`/branches/X/...`) can be passed as-is
-- **`getRepositoryRoot()`**: on first need, runs `svn info <SVN_REPO_URL>` once, parses `Repository Root: ...`, and caches it in `this.repositoryRoot`. No re-fetching afterwards
+  - Pre-processing: `\` is normalized to `/`; if the first segment of a relative path equals the last segment of `SVN_REPO_URL`, that one segment is stripped so that externally-sourced paths do not produce a doubled URL (`.../src/src/...`)
+- **`resolveTarget(path)`** decides whether svn is given the repository URL or a local WC path. When `SVN_WORKING_COPY` is set and `useDocker=false`, a target inside the checkout that exists on disk is passed as the WC path (rides on the WC's cached credentials); anything else falls back to the URL. There is no exception-driven retry — the choice is deterministic so the origin of the data is never ambiguous. `list` / `log` / `cat` / `blame` / `diff` use it; `info` deliberately stays URL-based because `svn info <wc-path>` reports the BASE revision, which would break `head_revision` in `svn_describe`. `log` on a WC path adds `-r HEAD:1` when no range is given, because the WC default (`BASE:1`) would drop commits newer than the checkout
+- **`getRepositoryRoot()`**: resolved from `svn info <SVN_WORKING_COPY>` when a WC is available (avoids a URL request), otherwise from `svn info <SVN_REPO_URL>`; parsed from `Repository Root: ...` and cached in `this.repositoryRoot`
 - Every method **returns svn's raw stdout string as-is** (no parsing; the LLM can read it as text)
 
 ### `external/diff-tool.ts`
@@ -130,11 +134,13 @@ Using `svn_log` as an example:
 - **Windows only**. `SVN_WORKING_COPY` is kept separate from `SVN_REPO_URL_CLIENT` (for Tortoise) because Tortoise also accepts URLs, whereas Explorer only accepts local paths
 
 ### `tools/context.ts` (shared infrastructure)
-- `ToolContext` type: `{ svn: SvnClient; diffTool?: DiffToolConfig }`
-- `ToolResult` type and 3 helpers:
+- `ToolContext` type: `{ svn: SvnClient; diffTool?: DiffToolConfig; tortoise?: TortoiseConfig; explorer?: ExplorerConfig }` — each optional config gates the corresponding GUI tool
+- `ToolResult` type and helpers:
   - `textResult(text)` — plain-text response
   - `jsonResult(data)` — JSON.stringify-ed response (used by `show_diff_external`)
   - `errorResult(message, detail?)` — response with `isError: true`
+  - `runSvn(fn)` — runs an svn call and converts `SvnError` into `errorResult`
+  - `sliceLines(text, start?, end?)` — 1-based inclusive line-range slice used by `svn_cat` / `svn_blame` for `start_line` / `end_line`
 
 ### `tools/*.ts` (each tool)
 - One file per tool
