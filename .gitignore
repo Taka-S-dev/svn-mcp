@@ -19,3 +19,21 @@
 !/copilot-instructions.example.md
 # 注意: copilot-instructions.md / CLAUDE.md（実物）は環境固有の用語・運用を含むため
 # 追跡しない。テンプレート (.example.md) のみ追跡する。
+
+# 許可したディレクトリの中でも、機密らしい名前は再拒否する（許可行より後に置くこと）
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+**/id_rsa*
+**/secrets.json
+**/secrets.toml
+**/secrets.yaml
+**/secrets.yml
+**/secrets.env
+**/credentials.json
+**/credentials.toml
+**/credentials.yaml
+**/credentials.yml
+**/credentials.env
