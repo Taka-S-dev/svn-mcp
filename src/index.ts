@@ -83,6 +83,7 @@ function readConfig(): AppConfig {
       composeDir,
       dockerService,
       timeoutMs,
+      wcPath: workingCopy,
     },
     diffTool,
     tortoise,

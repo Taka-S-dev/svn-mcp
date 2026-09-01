@@ -72,6 +72,11 @@ export function register(server: McpServer, ctx: ToolContext) {
             `SVN_REPO_URL はリポルート (${repositoryRoot}) より深い位置を指している。tool 引数 path には SVN_REPO_URL 起点の相対パス（例: 'extend/foo.c'）か、リポルート起点の絶対パス（例: '/branches/X/extend/foo.c'、'/' 始まりで svn log -v の出力をそのまま渡せる）を使う。両方とも自動で正しい URL に解決される。`,
           );
         }
+        if (ctx.explorer) {
+          hintParts.push(
+            "find_path / grep_in_repo が返す WC 相対パスは、そのまま svn_log / svn_blame / svn_diff / svn_cat の path に渡せる（URL を組み立て直す必要はない）。WC サブツリー内のパスはローカル WC 経由で取得され、認証プロンプトを回避できる。",
+          );
+        }
         if (wcFreshness?.fresh === false && wcFreshness.behind_by != null) {
           hintParts.push(
             `WC が ${wcFreshness.behind_by} コミット遅れている。find_path / grep_in_repo の結果は古い可能性あり。svn update を推奨。`,

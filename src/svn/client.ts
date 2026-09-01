@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 export interface SvnConfig {
   /** SVN リポジトリ URL（file:// or https:// 等）。末尾スラッシュは除去。 */
@@ -11,6 +13,14 @@ export interface SvnConfig {
   dockerService?: string;
   /** svn コマンドのタイムアウト（ms）。 */
   timeoutMs: number;
+  /**
+   * ローカル作業コピー（WC）の絶対パス（SVN_WORKING_COPY）。
+   * 設定かつ direct モード（useDocker=false）のとき、WC サブツリー内の対象は
+   * URL ではなく WC ローカルパスを svn に渡す。WC のキャッシュ認証に乗るため
+   * HTTP URL アクセス時の認証プロンプトを回避でき、URL 構築も不要になる。
+   * docker モードではコンテナがホスト WC を参照できないため使われない。
+   */
+  wcPath?: string;
 }
 
 export class SvnError extends Error {
@@ -65,7 +75,71 @@ export class SvnClient {
    */
   private repositoryRoot: string | null = null;
 
+  /** WC ルートが対応するリポジトリ URL（svn info <wc> の "URL:"）。未取得は null。 */
+  private wcUrl: string | null = null;
+  /** ensureWcInfo を一度だけ走らせるためのフラグ。 */
+  private wcInfoLoaded = false;
+
   constructor(public readonly config: SvnConfig) {}
+
+  /** WC ローカル実行が使えるか（WC 設定済み かつ direct モード）。 */
+  private get wcRoutingEnabled(): boolean {
+    return !!this.config.wcPath && !this.config.useDocker;
+  }
+
+  /**
+   * WC に対して一度だけ `svn info` を実行し、Repository Root と WC の URL をキャッシュする。
+   * direct モードかつ WC 設定時のみ。失敗時は wcUrl=null のままにして URL 経路へフォールバックさせる。
+   * これにより Repository Root も WC 由来で得られ、URL への svn info（認証プロンプトの起点）を回避できる。
+   */
+  private async ensureWcInfo(): Promise<void> {
+    if (this.wcInfoLoaded) return;
+    this.wcInfoLoaded = true;
+    if (!this.wcRoutingEnabled) return;
+    try {
+      const text = (await this.execSvn(["info", this.config.wcPath!])).stdout;
+      const rootM = text.match(/^Repository Root:\s*(\S+)/m);
+      const urlM = text.match(/^URL:\s*(\S+)/m);
+      if (rootM && !this.repositoryRoot) {
+        this.repositoryRoot = rootM[1].replace(/\/+$/, "");
+      }
+      if (urlM) this.wcUrl = urlM[1].replace(/\/+$/, "");
+    } catch {
+      // WC info 取得失敗（svn 不在・WC でない等）。URL 経路にフォールバックする。
+    }
+  }
+
+  /**
+   * 対象を「WC ローカルパス」か「リポジトリ URL」のどちらで svn に渡すかを決定論的に振り分ける。
+   *
+   * - WC 未設定 / docker モード: 常に URL
+   * - 対象 URL が WC サブツリー外（別ブランチ等）: URL
+   * - 対象のローカル実体が無い（sparse/partial checkout）: URL
+   * - 上記以外（WC サブツリー内で実体あり）: WC ローカルパス
+   *
+   * 例外ハンドリングによる「失敗したら URL で再試行」はしない（データの出所が不定になり危険）。
+   */
+  async resolveTarget(
+    path?: string,
+  ): Promise<{ kind: "wc" | "url"; value: string }> {
+    const url = await this.resolveUrl(path);
+    if (!this.wcRoutingEnabled) return { kind: "url", value: url };
+    await this.ensureWcInfo();
+    if (!this.wcUrl) return { kind: "url", value: url };
+
+    let rel: string | null = null;
+    if (url === this.wcUrl) rel = "";
+    else if (url.startsWith(this.wcUrl + "/")) {
+      rel = url.slice(this.wcUrl.length + 1);
+    }
+    if (rel === null) return { kind: "url", value: url };
+
+    const local = rel
+      ? join(this.config.wcPath!, ...rel.split("/"))
+      : this.config.wcPath!;
+    if (!existsSync(local)) return { kind: "url", value: url };
+    return { kind: "wc", value: local };
+  }
 
   /**
    * Repository Root をキャッシュ済みなら返し、未取得なら svn info を叩いて取得＋キャッシュ。
@@ -75,6 +149,12 @@ export class SvnClient {
    */
   async getRepositoryRoot(infoText?: string): Promise<string> {
     if (this.repositoryRoot) return this.repositoryRoot;
+    // 呼び出し側が info 出力を持っていなければ、まず WC 由来で解決を試みる
+    // （URL への svn info を避けられる）。WC が使えないときだけ URL に問い合わせる。
+    if (!infoText) {
+      await this.ensureWcInfo();
+      if (this.repositoryRoot) return this.repositoryRoot;
+    }
     const text =
       infoText ??
       (await this.execSvn(["info", this.config.repoUrl.replace(/\/+$/, "")]))
@@ -169,6 +249,11 @@ export class SvnClient {
 
   // ===== 高レベル API =====
 
+  /**
+   * info は意図的に URL ベースのまま（resolveTarget を使わない）。
+   * WC パスに対する svn info は Revision が WC の BASE になり、サーバ HEAD と食い違うため。
+   * svn_describe の head_revision 判定が WC ローカルパスでは壊れる。
+   */
   async info(path?: string): Promise<string> {
     const url = await this.resolveUrl(path);
     const r = await this.execSvn(["info", url]);
@@ -181,7 +266,7 @@ export class SvnClient {
   ): Promise<string> {
     const args = ["list"];
     if (opts.recursive) args.push("-R");
-    args.push(await this.resolveUrl(path));
+    args.push((await this.resolveTarget(path)).value);
     const r = await this.execSvn(args);
     return r.stdout;
   }
@@ -204,28 +289,37 @@ export class SvnClient {
     if (opts.limit) args.push("--limit", String(opts.limit));
     if (opts.verbose) args.push("-v");
 
+    let hasRange = false;
     if (opts.fromRev != null || opts.toRev != null) {
       const from = opts.fromRev ?? 1;
       const to = opts.toRev ?? "HEAD";
       args.push("-r", `${from}:${to}`);
+      hasRange = true;
     } else if (opts.fromDate || opts.toDate) {
       const from = opts.fromDate ? `{${opts.fromDate}}` : "1";
       const to = opts.toDate ? `{${opts.toDate}}` : "HEAD";
       args.push("-r", `${from}:${to}`);
+      hasRange = true;
     }
 
     if (opts.messageContains) {
       args.push("--search", opts.messageContains);
     }
 
-    args.push(await this.resolveUrl(path));
+    const target = await this.resolveTarget(path);
+    // WC パスに対する svn log の既定は BASE:1（＝WC リビジョンまで）で、未 update の
+    // 最新コミットを取りこぼす。範囲未指定なら HEAD:1 を明示して URL 時と挙動を揃える。
+    if (target.kind === "wc" && !hasRange) {
+      args.push("-r", "HEAD:1");
+    }
+    args.push(target.value);
     const r = await this.execSvn(args);
     return r.stdout;
   }
 
   async cat(revision: number | "HEAD", path: string): Promise<string> {
-    const url = await this.resolveUrl(path);
-    const args = ["cat", "-r", String(revision), url];
+    const target = (await this.resolveTarget(path)).value;
+    const args = ["cat", "-r", String(revision), target];
     const r = await this.execSvn(args);
     return r.stdout;
   }
@@ -242,7 +336,7 @@ export class SvnClient {
     if (opts.revision != null) {
       args.push("-r", String(opts.revision));
     }
-    args.push(await this.resolveUrl(path));
+    args.push((await this.resolveTarget(path)).value);
     const r = await this.execSvn(args);
     return r.stdout;
   }
@@ -265,7 +359,7 @@ export class SvnClient {
     } else if (opts.fromRev != null && opts.toRev != null) {
       args.push("-r", `${opts.fromRev}:${opts.toRev}`);
     }
-    args.push(await this.resolveUrl(opts.path));
+    args.push((await this.resolveTarget(opts.path)).value);
     const r = await this.execSvn(args);
     return r.stdout;
   }
