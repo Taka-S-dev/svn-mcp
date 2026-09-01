@@ -1,60 +1,60 @@
 # svn-mcp
 
-SVN リポジトリへの**読み取りアクセス**を提供する MCP（Model Context Protocol）サーバ。
-AI エージェント（GitHub Copilot CLI / Claude Code 等）から SVN のコミット履歴・ファイル内容・差分を読めるようにする。
+An MCP (Model Context Protocol) server that provides **read-only access** to SVN repositories.
+It lets AI agents (GitHub Copilot CLI, Claude Code, etc.) read commit history, file contents, and diffs from SVN.
 
-## 何ができるか
+## What it can do
 
-- 「trunk/src/foo.cpp の最近 10 件のコミット履歴を見せて」
-- 「r142 の変更内容を foo.cpp に絞って unified diff で」
-- 「r141 → r142 の差分を WinMerge で開いて目視確認したい」
-- 「あるパスを変更したコミットの中から特定のキーワードを含むものを探したい」
+- "Show me the last 10 commits for trunk/src/foo.cpp"
+- "Show the changes in r142 as a unified diff, limited to foo.cpp"
+- "Open the r141 → r142 diff in my diff tool so I can eyeball it"
+- "Find the commits that touched this path and contain a specific keyword"
 
-## 設計方針
+## Design principles
 
-- **読み取り専用**: `info` / `list` / `log` / `cat` / `diff` のみ。コミット系は実装しない（AI に誤更新させない安全策）
-- **Docker と直接の両対応**: ホストに `svn` が無くても、Docker コンテナ内の svn を `docker compose exec` 経由で動かせる
-- **GUI 差分ツール起動**: LLM が推定した修正候補を、人間が WinMerge 等で目視確認できる
-- **依存最小**: `@modelcontextprotocol/sdk` と `zod` のみ
+- **Read-only**: only `info` / `list` / `log` / `cat` / `diff`. No commit-type operations are implemented (a safety measure so the AI cannot make accidental changes)
+- **Works with Docker or directly**: even if the host has no `svn`, the svn inside a Docker container can be driven via `docker compose exec`
+- **Optional GUI hand-off**: fix candidates inferred by the LLM can be handed to a human for visual verification in their own diff tool, SVN client, or file manager
+- **Minimal dependencies**: only `@modelcontextprotocol/sdk` and `zod`
 
-## セットアップ手順（クリーン環境から）
+## Setup (from a clean environment)
 
-### 0. 必要環境
+### 0. Requirements
 
-- **Node.js 22 以上**（22 LTS または 24 LTS 推奨）
-  - 確認: `node --version`
-  - 未インストールなら https://nodejs.org/ から
-- **svn コマンド**（`SVN_USE_DOCKER=false` で使う場合のみ。Docker 経由なら不要）
-- **Docker / Docker Compose v2**（`SVN_USE_DOCKER=true` で使う場合のみ）
-- Git（コード取得に使う場合）
+- **Node.js 22 or later** (22 LTS or 24 LTS recommended)
+  - Check: `node --version`
+  - If not installed, get it from https://nodejs.org/
+- **svn command** (only when using `SVN_USE_DOCKER=false`; not needed when going through Docker)
+- **Docker / Docker Compose v2** (only when using `SVN_USE_DOCKER=true`)
+- Git (if you use it to fetch the code)
 
-### 1. コードを取得
+### 1. Get the code
 
-git を使う場合：
+With git:
 ```powershell
-git clone <このリポジトリ URL> svn-mcp
+git clone <this repository URL> svn-mcp
 cd svn-mcp
 ```
 
-zip / USB でコピーした場合は、解凍後そのディレクトリに `cd`。
+If you copied a zip / USB, `cd` into the extracted directory.
 
-### 2. 依存インストール
+### 2. Install dependencies
 
 ```powershell
 npm install
 ```
 
-`added N packages, found 0 vulnerabilities` のような出力が出れば OK。
+You should see output like `added N packages, found 0 vulnerabilities`.
 
-### 3. ビルド
+### 3. Build
 
 ```powershell
 npm run build
 ```
 
-`dist/` ディレクトリが生成される。
+This generates the `dist/` directory.
 
-### 4. `.env` を作成
+### 4. Create `.env`
 
 PowerShell:
 ```powershell
@@ -66,181 +66,175 @@ Git Bash / WSL:
 cp .env.example .env
 ```
 
-`.env` をエディタで開いて編集。必要項目は次の節を参照。
+Open `.env` in an editor and edit it. See the next section for the required entries.
 
-#### 最小構成 ① — Docker 経由（ホストに svn 不要）
+#### Minimal configuration ① — via Docker (no svn on the host)
 
-`docker compose` で立てたコンテナの中の `svn` を使うパターン。
+Use the `svn` inside a container brought up with `docker compose`.
 
 ```dotenv
 SVN_REPO_URL=file:///svn-repo/my-repo
 SVN_USE_DOCKER=true
 SVN_COMPOSE_DIR=C:\path\to\your\docker-compose-dir
-# SVN_DOCKER_SERVICE=svn        # 既定 "svn"。compose のサービス名に合わせる
+# SVN_DOCKER_SERVICE=svn        # default "svn". Match your compose service name
 ```
 
-`SVN_COMPOSE_DIR` は `compose.yml` のあるディレクトリ。`SVN_REPO_URL` はコンテナ内から見たパス。
+`SVN_COMPOSE_DIR` is the directory containing `compose.yml`. `SVN_REPO_URL` is the path as seen from inside the container.
 
-#### 最小構成 ② — ホストの svn を直接
+#### Minimal configuration ② — host svn directly
 
-ホストに `svn` がインストール済みなら：
+If `svn` is installed on the host:
 
 ```dotenv
 SVN_REPO_URL=https://svn.example.com/repo
 SVN_USE_DOCKER=false
 ```
 
-#### オプション — WinMerge で差分を目視確認したい場合
+#### Optional — GUI integrations and working copy
+
+These are all optional. Leaving one unset only disables the corresponding tool; everything else keeps working.
 
 ```dotenv
-SVN_EXTERNAL_DIFF_TOOL=C:\Program Files\WinMerge\WinMergeU.exe
-```
+# Any diff tool that can be launched as `<tool> <left-file> <right-file>`.
+# Enables show_diff_external.
+#SVN_EXTERNAL_DIFF_TOOL=C:\path\to\diff-tool.exe
 
-未設定だと `show_diff_external` ツールだけが無効になり、他のツール（`svn_log` 等）は動く。
-このツールを使うときは **MCP サーバをホスト OS（Windows/macOS）で動かすこと**（Docker / WSL 内では GUI が表示されない）。
-
-#### オプション — TortoiseSVN でログを目視確認したい場合
-
-```dotenv
-SVN_TORTOISE_PROC=C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe
-# Docker 内 file:// 等で SVN_REPO_URL が Windows から見えない場合は、
-# TortoiseSVN 用のベース URL or 作業コピーパスを別途指定:
+# Path to TortoiseProc.exe. Enables show_log_tortoise (Windows only).
+#SVN_TORTOISE_PROC=C:\path\to\TortoiseProc.exe
+# If SVN_REPO_URL is not reachable from Windows (e.g. a file:// path inside Docker),
+# give the GUI client a separate base URL or working-copy path:
 #SVN_REPO_URL_CLIENT=https://svn.example.com/repo
+
+# Absolute path of a local working copy. Enables open_in_explorer (Windows only)
+# and the fast WC-based find_path / grep_in_repo tools.
+# This is a local checkout, separate from the SVN repository URL.
+#SVN_WORKING_COPY=C:\path\to\working-copy
 ```
 
-未設定だと `show_log_tortoise` ツールだけが無効になり、他のツールは動く。
-Windows ホストで MCP サーバを動かしている必要がある。
+Tools that open a GUI (`show_diff_external` / `show_log_tortoise` / `open_in_explorer`) require the **MCP server to run on the host OS** — a window launched inside Docker / WSL is not visible. See [docs/TOOLS.md](docs/TOOLS.md) for details on each tool.
 
-#### オプション — Windows エクスプローラで開きたい場合
+#### Optional — timeout
 
 ```dotenv
-SVN_WORKING_COPY=C:\path\to\working-copy
+SVN_TIMEOUT_MS=60000    # default 30000ms. Increase when svn log/list is slow on large repositories
 ```
 
-未設定だと `open_in_explorer` ツールだけが無効になる。
-作業コピー（ローカル WC）が前提で、SVN リポジトリ URL とは別物。
+### 5. Verify it works
 
-#### オプション — タイムアウト
-
-```dotenv
-SVN_TIMEOUT_MS=60000    # 既定 30000ms。大きなリポジトリで svn log/list が遅いとき延長
-```
-
-### 5. 動作確認
-
-#### 簡易（起動だけ）
+#### Quick (start only)
 
 ```powershell
 npm run dev
 ```
 
-stderr に以下のような行が出れば OK（stdin/stdout で MCP プロトコル待機。Ctrl+C で停止）：
+You should see a line like the following on stderr (the server is now waiting for the MCP protocol on stdin/stdout; stop with Ctrl+C):
 
 ```
 [svn-mcp] started (repo=file:///svn-repo/my-repo, docker=true)
 ```
 
-#### 推奨（疎通テスト）
+#### Recommended (connectivity test)
 
 ```powershell
 npm run build
 npm run smoke
 ```
 
-MCP プロトコル経由で主要ツール（svn_describe / svn_info / svn_list / svn_log / find_path）を実際に呼び、PASS/FAIL を表示します。
-SVN サーバへの実接続まで含めた end-to-end 確認になるので、最初のセットアップやリファクタ後の確認に。
+This actually calls the main tools (svn_describe / svn_info / svn_list / svn_log / find_path) over the MCP protocol and reports PASS/FAIL.
+It is an end-to-end check that includes the real connection to the SVN server, so use it for initial setup and after refactoring.
 
-`SVN_EXTERNAL_DIFF_TOOL` 未設定の場合は追加で次の行も出る：
+If `SVN_EXTERNAL_DIFF_TOOL` is unset, you will also see this line:
 ```
 [svn-mcp] SVN_EXTERNAL_DIFF_TOOL 未設定: show_diff_external は利用不可
 ```
+(meaning: `SVN_EXTERNAL_DIFF_TOOL` not set: `show_diff_external` is unavailable)
 
-これは警告で、他のツールは普通に動く。
+This is just a warning; the other tools work normally.
 
-接続できない場合は[トラブルシューティング](#トラブルシューティング)参照。
+If you cannot connect, see [Troubleshooting](#troubleshooting).
 
-### 6. MCP クライアントへ登録
+### 6. Register with an MCP client
 
-次の「[MCP クライアントへの登録](#mcp-クライアントへの登録)」セクション参照。
+See the next section, "[Registering with MCP clients](#registering-with-mcp-clients)".
 
-## MCP クライアントへの登録
+## Registering with MCP clients
 
-このプロジェクトには **`.mcp.json` が同梱されている**ので、ほとんどの MCP クライアントは**プロジェクトディレクトリで起動するだけ**で svn MCP を自動認識します。
+This project **ships with a `.mcp.json`**, so most MCP clients will pick up the svn MCP server automatically **just by being launched in the project directory**.
 
 ### Claude Code
 
-#### 方法 ①（推奨）: `.mcp.json` 自動認識
+#### Method ① (recommended): automatic `.mcp.json` detection
 
-VSCode を **このプロジェクトのフォルダで開く**だけ。Claude Code 拡張が `.mcp.json` を検出し、初回起動時に承認ダイアログが出るので Approve。
+Simply open VSCode **in this project's folder**. The Claude Code extension detects `.mcp.json` and shows an approval dialog on first launch; click Approve.
 
-承認後の確認は、新しい会話で：
+To confirm after approval, start a new conversation and ask:
 
 ```
-使える MCP ツール一覧を見せて
+Show me the available MCP tools
 ```
 
-#### 方法 ②: ユーザー設定（どこのプロジェクトからでも使いたい場合）
+#### Method ②: user settings (to use it from any project)
 
-`~/.claude/settings.json` の `mcpServers` キーに追記：
+Add to the `mcpServers` key in `~/.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
     "svn": {
       "command": "node",
-      "args": ["--env-file=.env", "<このプロジェクトの絶対パス>/dist/index.js"],
-      "cwd": "<このプロジェクトの絶対パス>"
+      "args": ["--env-file=.env", "<absolute path to this project>/dist/index.js"],
+      "cwd": "<absolute path to this project>"
     }
   }
 }
 ```
 
-VSCode を再起動。
+Restart VSCode.
 
-> パスは Windows でも JSON 内では `/` 区切り推奨（`\` だとエスケープが面倒）。
+> Even on Windows, use `/` as the path separator inside JSON (`\` requires tedious escaping).
 
 ### GitHub Copilot CLI
 
-#### 方法 ①（推奨）: `.mcp.json` 自動認識
+#### Method ① (recommended): automatic `.mcp.json` detection
 
-このプロジェクトディレクトリで `copilot` を起動するだけ：
+Just launch `copilot` in this project directory:
 
 ```powershell
 cd C:\path\to\svn-mcp
 copilot
 ```
 
-`.mcp.json` がワークスペース設定として自動読み込みされる。確認：
+`.mcp.json` is loaded automatically as workspace configuration. To confirm:
 
 ```powershell
 copilot mcp list
-# → Workspace servers: svn (local) と出ればOK
+# → OK if it shows "Workspace servers: svn (local)"
 ```
 
-#### 方法 ②: ユーザー設定（どこからでも使いたい場合）
+#### Method ②: user settings (to use it from anywhere)
 
 ```powershell
 copilot mcp add svn `
   --env SVN_REPO_URL=file:///svn-repo/my-repo `
   --env SVN_USE_DOCKER=true `
   --env SVN_COMPOSE_DIR=C:\path\to\your\docker-compose-dir `
-  -- node <このプロジェクトの絶対パス>/dist/index.js
+  -- node <absolute path to this project>/dist/index.js
 ```
 
-> ユーザー設定だと `--env-file=.env` の相対パス解決が効かないので、`--env` で直接環境変数を渡す。
+> With user settings, the relative path in `--env-file=.env` does not resolve, so pass the environment variables directly with `--env`.
 
-### 複数の MCP サーバを併用する場合
+### Using multiple MCP servers together
 
-他の MCP サーバ（チケット管理ツール用など）と一緒に使うときは、**両方を指す `.mcp.json` を 1 つ別ディレクトリに作る**のが手っ取り早い：
+When combining with other MCP servers (e.g. one for a ticketing tool), the quickest approach is to **create a single `.mcp.json` in a separate directory that points to both**:
 
 ```powershell
 mkdir C:\path\to\mcp-workspace
-# 下記の .mcp.json をその中に置く
+# Put the .mcp.json below inside it
 cd C:\path\to\mcp-workspace
-copilot         # または VSCode をそのフォルダで開く
+copilot         # or open VSCode in that folder
 ```
 
-`C:\path\to\mcp-workspace\.mcp.json`：
+`C:\path\to\mcp-workspace\.mcp.json`:
 
 ```json
 {
@@ -259,96 +253,96 @@ copilot         # または VSCode をそのフォルダで開く
 }
 ```
 
-ポイント：
+Key points:
 
-- **`cwd` を必ず指定する** — これで各 MCP サーバが「**自分のプロジェクトディレクトリで起動**」する。`--env-file=.env` も `dist/index.js` もそのディレクトリで相対解決されるので、各サーバが各自の `.env` を読む
-- パス区切りは `/` 推奨（`\` だと JSON エスケープが面倒）
-- ワークスペース用ディレクトリは空でも OK（`.mcp.json` だけあればよい）
-- 確認は `copilot mcp list` または Claude Code で `使える MCP ツール一覧を見せて`
+- **Always specify `cwd`** — this makes each MCP server **start in its own project directory**. Both `--env-file=.env` and `dist/index.js` are resolved relative to that directory, so each server reads its own `.env`
+- Use `/` as the path separator (`\` requires tedious JSON escaping)
+- The workspace directory can be otherwise empty (only `.mcp.json` is needed)
+- Confirm with `copilot mcp list`, or in Claude Code ask `Show me the available MCP tools`
 
-### 共通の注意
+### General notes
 
-- `.mcp.json` 方式の場合、**MCP クライアントを起動した CWD がプロジェクトディレクトリ**であることが必要
-- `.env` の値を変えたら、クライアントを再起動して MCP サーバープロセスを再生成すること（プロセス起動時にしか `.env` は読まれない）
+- With the `.mcp.json` approach, **the CWD in which the MCP client is launched must be the project directory**
+- After changing values in `.env`, restart the client to respawn the MCP server process (`.env` is only read at process startup)
 
-## 提供ツール
+## Provided tools
 
-| ツール | 用途 |
+| Tool | Purpose |
 |---|---|
-| `svn_describe` | リポジトリの URL・HEAD・トップレベル構造・利用可能ツール・WC 最新性を一括取得（**セッション開始時にまず呼ぶ**） |
-| `svn_info` | リポジトリ/パスの info（HEAD revision など） |
-| `svn_list` | ファイル/ディレクトリ一覧（`-R` で再帰） |
-| `svn_log` | コミット履歴（path/limit/range/verbose 指定可） |
-| `svn_cat` | 指定リビジョンのファイル内容を取得 |
-| `svn_diff` | 単一リビジョン or 範囲の unified diff |
-| `svn_blame` | 行ごとに「最後に変更したリビジョン・著者」を表示（バグ調査の起点） |
-| `find_path` | WC 内のファイル名を高速検索（`SVN_WORKING_COPY` 設定時） |
-| `grep_in_repo` | WC 内のテキストファイルを grep（`SVN_WORKING_COPY` 設定時） |
-| `show_diff_external` | 2 リビジョン × ファイルを WinMerge 等で開く（人間向け） |
-| `show_log_tortoise` | 指定パスのログダイアログを TortoiseSVN で開く（人間向け） |
-| `open_in_explorer` | 作業コピー配下のパスを Windows エクスプローラで開く（人間向け） |
+| `svn_describe` | Fetch the repository URL, HEAD, top-level structure, available tools, and WC freshness in one call (**call this first at the start of a session**) |
+| `svn_info` | Info for the repository / a path (HEAD revision, etc.) |
+| `svn_list` | List files / directories (`-R` for recursive) |
+| `svn_log` | Commit history (path/limit/range/verbose supported) |
+| `svn_cat` | Get file contents at a given revision |
+| `svn_diff` | Unified diff for a single revision or a range |
+| `svn_blame` | Show the "last-modified revision and author" per line (starting point for bug investigation) |
+| `find_path` | Fast file-name search in the WC (when `SVN_WORKING_COPY` is set) |
+| `grep_in_repo` | Grep text files in the WC (when `SVN_WORKING_COPY` is set) |
+| `show_diff_external` | Open 2 revisions × a file in an external diff tool (for humans) |
+| `show_log_tortoise` | Open the TortoiseSVN log dialog for a path (for humans) |
+| `open_in_explorer` | Open a path under the working copy in Windows Explorer (for humans) |
 
-**詳細な仕様（引数・返却値・サンプルクエリ）は [docs/TOOLS.md](docs/TOOLS.md) 参照。**
+**For detailed specifications (arguments, return values, sample queries), see [docs/TOOLS.md](docs/TOOLS.md).**
 
-## ツール追加方法
+## Adding a tool
 
-1. `src/svn/client.ts` の `SvnClient` に対応メソッドを追加（read-only allowlist 通過確認）
-2. `src/tools/your-tool.ts` を新規作成
-3. `register(server, ctx)` 関数をエクスポート
-4. `src/index.ts` に `import` と `register` 呼び出しを追加
+1. Add a corresponding method to `SvnClient` in `src/svn/client.ts` (make sure it passes the read-only allowlist)
+2. Create `src/tools/your-tool.ts`
+3. Export a `register(server, ctx)` function
+4. Add the `import` and `register` call to `src/index.ts`
 
-既存ツールがテンプレートとして使えます。`src/tools/svn-info.ts` が一番シンプル。
+Existing tools can be used as templates. `src/tools/svn-info.ts` is the simplest.
 
-**コードを修正・拡張する場合は、まず [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)（設計書）を読んでください。** 全体構成・設計思想・拡張手順・注意点がまとまっています。
+**Before modifying or extending the code, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (the design document) first.** It covers the overall structure, design philosophy, extension steps, and pitfalls.
 
-## 想定ワークフロー
+## Expected workflow
 
-典型的な使い方の流れ：
+A typical flow:
 
-1. ユーザ: 「foo.cpp の最近の修正を見たい」
-2. LLM → svn-mcp: `svn_log(path="trunk/src/foo.cpp", limit=10, verbose=true)` で履歴取得
-3. LLM → svn-mcp: 候補ごとに `svn_diff(change_rev=N, path=...)` で差分確認
-4. LLM がハンク単位で内容を要約し、「r142 で X が変わった」等を提示
-5. ユーザ: 「目で見たい」
-6. LLM → svn-mcp: `show_diff_external(revision_before=141, revision_after=142, path=...)` → WinMerge 起動
+1. User: "I want to see the recent changes to foo.cpp"
+2. LLM → svn-mcp: fetch history with `svn_log(path="trunk/src/foo.cpp", limit=10, verbose=true)`
+3. LLM → svn-mcp: check the diff for each candidate with `svn_diff(change_rev=N, path=...)`
+4. The LLM summarizes the content hunk by hunk and reports things like "X changed in r142"
+5. User: "I want to see it with my own eyes"
+6. LLM → svn-mcp: `show_diff_external(revision_before=141, revision_after=142, path=...)` → the external diff tool launches
 
-外部のチケット管理ツール用 MCP サーバと併用すれば、「チケットに書かれたファイルパス → SVN で履歴と差分を確認」という流れも自然言語の指示でつながります。
+Combined with an MCP server for an external ticketing tool, a flow like "file path written in the ticket → check history and diff in SVN" can be driven end to end by natural-language instructions.
 
-## トラブルシューティング
+## Troubleshooting
 
-| 症状 | 対処 |
+The first five rows quote the actual error text emitted by the server (currently in Japanese), with an English gloss.
+
+| Symptom | Fix |
 |---|---|
-| `SVN_REPO_URL が設定されていません` | `.env` を作成・編集 |
-| `SVN_USE_DOCKER=true のとき SVN_COMPOSE_DIR の指定が必要です` | `.env` に `SVN_COMPOSE_DIR=...` を追加 |
-| `svn: E170000: URL '...' non-existent in revision N` | `SVN_REPO_URL` が間違っているか、指定パスが存在しない。`svn_info` で確認 |
-| `svn コマンドが Nms でタイムアウトしました` | `SVN_TIMEOUT_MS` を増やすか、`recursive` を外す／`limit` を減らす |
-| `svn-mcp は読み取り専用です。サブコマンド '...' は許可されていません` | 設計通り。書き込み系は別ツールでやる |
-| `docker compose exec` が動かない | `SVN_COMPOSE_DIR` が compose.yml のあるディレクトリか確認。`docker compose -f <そこ>/compose.yml ps` で疎通確認 |
-| Docker コンテナに svn が無い | Dockerfile に `apt-get install -y subversion` 等を追加してリビルド |
-| `show_diff_external` で「外部差分ツールが未設定」 | `.env` に `SVN_EXTERNAL_DIFF_TOOL=...` を追加 |
-| `show_log_tortoise` で「TortoiseSVN が未設定」 | `.env` に `SVN_TORTOISE_PROC=...` を追加 |
-| TortoiseSVN が起動するが「URL が見つからない」等のエラー | Docker 内 `file://` URL を Windows TortoiseSVN から見ようとしている。`.env` に `SVN_REPO_URL_CLIENT=...` で Windows 到達可能な URL or 作業コピーパスを指定 |
-| `open_in_explorer` で「作業コピーが未設定」 | `.env` に `SVN_WORKING_COPY=...` を追加 |
-| エクスプローラは開くがフォルダが存在しない | `SVN_WORKING_COPY` 配下に該当パスが無い。WC を `svn update` するか、別の WC を指す |
-| WinMerge / TortoiseSVN / Explorer が起動しない／画面に出ない | MCP サーバを Docker / WSL2 内で動かしていないか確認。Windows ホスト OS で動かす必要あり |
-| `svn_cat` の出力が文字化け | バイナリファイルを cat していないか確認。UTF-8 以外のテキストにも未対応 |
-| `svn_log -v` の出力が長すぎてトークンが尽きる | `limit` を減らすか、`path` を指定して特定ファイルに絞る |
+| `SVN_REPO_URL が設定されていません` (SVN_REPO_URL is not set) | Create / edit `.env` |
+| `SVN_USE_DOCKER=true のとき SVN_COMPOSE_DIR の指定が必要です` (SVN_COMPOSE_DIR is required when SVN_USE_DOCKER=true) | Add `SVN_COMPOSE_DIR=...` to `.env` |
+| `svn: E170000: URL '...' non-existent in revision N` | `SVN_REPO_URL` is wrong, or the given path does not exist. Check with `svn_info` |
+| `svn コマンドが Nms でタイムアウトしました` (svn command timed out after N ms) | Increase `SVN_TIMEOUT_MS`, or drop `recursive` / reduce `limit` |
+| `svn-mcp は読み取り専用です。サブコマンド '...' は許可されていません` (svn-mcp is read-only; subcommand '...' is not allowed) | Working as designed. Do write operations with another tool |
+| `docker compose exec` does not work | Check that `SVN_COMPOSE_DIR` is the directory containing compose.yml. Verify with `docker compose -f <that dir>/compose.yml ps` |
+| The Docker container has no svn | Add `apt-get install -y subversion` or similar to the Dockerfile and rebuild |
+| `show_diff_external` / `show_log_tortoise` / `open_in_explorer` reports "not configured" | Add the corresponding `SVN_EXTERNAL_DIFF_TOOL` / `SVN_TORTOISE_PROC` / `SVN_WORKING_COPY` to `.env` |
+| `show_log_tortoise` launches the client but it reports "URL not found" or similar | The client on Windows cannot see a `file://` URL inside Docker. Set `SVN_REPO_URL_CLIENT=...` in `.env` to a URL or working-copy path reachable from Windows |
+| `open_in_explorer` opens Explorer but the folder does not exist | The path does not exist under `SVN_WORKING_COPY`. Run `svn update` on the WC, or point to a different WC |
+| A GUI tool does not launch or does not appear on screen | Check whether the MCP server is running inside Docker / WSL2. It must run on the Windows host OS |
+| `svn_cat` output is garbled | Check that you are not cat-ing a binary file. Non-UTF-8 text is also unsupported |
+| `svn_log -v` output is too long and exhausts tokens | Reduce `limit`, or specify `path` to narrow down to a specific file |
 
-## アーキテクチャ
+## Architecture
 
 ```
 src/
-├── index.ts              MCP サーバ起動・ツール登録・.env 読込
+├── index.ts              MCP server startup, tool registration, .env loading
 ├── svn/
-│   └── client.ts         svn コマンド実行ラッパー（read-only allowlist・Docker/直接切替・タイムアウト）
+│   └── client.ts         svn command wrapper (read-only allowlist, Docker/direct switch, timeout)
 ├── external/
-│   ├── diff-tool.ts      外部差分ツール起動（一時ファイル展開＋detached spawn）
-│   ├── tortoise.ts       TortoiseProc.exe 起動（detached spawn）
-│   └── explorer.ts       Windows エクスプローラ起動（detached spawn）
+│   ├── diff-tool.ts      Launch external diff tool (write temp files + detached spawn)
+│   ├── tortoise.ts       Launch the SVN GUI client's log dialog (detached spawn)
+│   └── explorer.ts       Launch Windows Explorer (detached spawn)
 ├── wc/
-│   └── scanner.ts        作業コピーの walk・バイナリ判定ヘルパー
+│   └── scanner.ts        Working-copy walk and binary-detection helpers
 └── tools/
-    ├── context.ts                ツール共通基盤（ToolContext, textResult, jsonResult, errorResult, runSvn）
+    ├── context.ts                Shared tool infrastructure (ToolContext, textResult, jsonResult, errorResult, runSvn)
     ├── svn-describe.ts
     ├── svn-info.ts
     ├── svn-list.ts
@@ -363,6 +357,6 @@ src/
     └── open-in-explorer.ts
 ```
 
-依存は `@modelcontextprotocol/sdk` と `zod` のみ（サプライチェーン最小化）。svn 実行は `node:child_process` の `spawn`、環境変数は `node --env-file`、外部 GUI 起動は detached spawn。
+The only dependencies are `@modelcontextprotocol/sdk` and `zod` (minimal supply chain). svn is executed via `spawn` from `node:child_process`, environment variables come from `node --env-file`, and external GUIs are launched with a detached spawn.
 
-詳しい設計（レイヤー構造・各モジュールの責務・拡張方法・修正時の注意点）は **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** にまとめています。
+The detailed design (layer structure, responsibilities of each module, how to extend, things to watch out for when modifying) is documented in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.

@@ -1,105 +1,106 @@
-# svn-mcp ツール仕様
+# svn-mcp tool specifications
 
-このサーバーが提供する 6 つの MCP ツールの詳細仕様。**ソース** `src/tools/*.ts` **が一次情報**で、このドキュメントは人間向けの要約。仕様変更があったら再生成する。
+Detailed specifications of the MCP tools provided by this server. **The source** `src/tools/*.ts` **is the primary reference**; this document is a human-readable summary. Regenerate it when the specifications change.
 
-## 目次
+## Table of contents
 
-| ツール | 用途 | ソース |
+| Tool | Purpose | Source |
 |---|---|---|
-| [svn_describe](#svn_describe) | リポジトリ概要（URL・HEAD・top_level・ツール可用性）を一括取得 | [src/tools/svn-describe.ts](../src/tools/svn-describe.ts) |
-| [svn_info](#svn_info) | リポジトリ／パスの info（HEAD revision など） | [src/tools/svn-info.ts](../src/tools/svn-info.ts) |
-| [svn_list](#svn_list) | ファイル／ディレクトリ一覧 | [src/tools/svn-list.ts](../src/tools/svn-list.ts) |
-| [svn_log](#svn_log) | コミット履歴（path/limit/range/verbose） | [src/tools/svn-log.ts](../src/tools/svn-log.ts) |
-| [svn_cat](#svn_cat) | 指定リビジョンのファイル内容 | [src/tools/svn-cat.ts](../src/tools/svn-cat.ts) |
-| [svn_diff](#svn_diff) | unified diff（単一 or 範囲リビジョン） | [src/tools/svn-diff.ts](../src/tools/svn-diff.ts) |
-| [svn_blame](#svn_blame) | 行ごとの最終変更リビジョン・著者 | [src/tools/svn-blame.ts](../src/tools/svn-blame.ts) |
-| [find_path](#find_path) | WC 内のファイル名検索（要 SVN_WORKING_COPY） | [src/tools/find-path.ts](../src/tools/find-path.ts) |
-| [grep_in_repo](#grep_in_repo) | WC 内のテキスト grep（要 SVN_WORKING_COPY） | [src/tools/grep-in-repo.ts](../src/tools/grep-in-repo.ts) |
-| [show_diff_external](#show_diff_external) | 外部 GUI（WinMerge 等）で差分表示 | [src/tools/show-diff-external.ts](../src/tools/show-diff-external.ts) |
-| [show_log_tortoise](#show_log_tortoise) | TortoiseSVN のログダイアログを開く | [src/tools/show-log-tortoise.ts](../src/tools/show-log-tortoise.ts) |
-| [open_in_explorer](#open_in_explorer) | Windows エクスプローラで開く | [src/tools/open-in-explorer.ts](../src/tools/open-in-explorer.ts) |
+| [svn_describe](#svn_describe) | Fetch a repository overview (URL, HEAD, top_level, tool availability) in one call | [src/tools/svn-describe.ts](../src/tools/svn-describe.ts) |
+| [svn_info](#svn_info) | Info for the repository / a path (HEAD revision, etc.) | [src/tools/svn-info.ts](../src/tools/svn-info.ts) |
+| [svn_list](#svn_list) | List files / directories | [src/tools/svn-list.ts](../src/tools/svn-list.ts) |
+| [svn_log](#svn_log) | Commit history (path/limit/range/verbose) | [src/tools/svn-log.ts](../src/tools/svn-log.ts) |
+| [svn_cat](#svn_cat) | File contents at a given revision | [src/tools/svn-cat.ts](../src/tools/svn-cat.ts) |
+| [svn_diff](#svn_diff) | Unified diff (single revision or range) | [src/tools/svn-diff.ts](../src/tools/svn-diff.ts) |
+| [svn_blame](#svn_blame) | Last-modified revision and author per line | [src/tools/svn-blame.ts](../src/tools/svn-blame.ts) |
+| [find_path](#find_path) | File-name search in the WC (requires SVN_WORKING_COPY) | [src/tools/find-path.ts](../src/tools/find-path.ts) |
+| [grep_in_repo](#grep_in_repo) | Text grep in the WC (requires SVN_WORKING_COPY) | [src/tools/grep-in-repo.ts](../src/tools/grep-in-repo.ts) |
+| [show_diff_external](#show_diff_external) | Show a diff in an external GUI (WinMerge etc.) | [src/tools/show-diff-external.ts](../src/tools/show-diff-external.ts) |
+| [show_log_tortoise](#show_log_tortoise) | Open the TortoiseSVN log dialog | [src/tools/show-log-tortoise.ts](../src/tools/show-log-tortoise.ts) |
+| [open_in_explorer](#open_in_explorer) | Open in Windows Explorer | [src/tools/open-in-explorer.ts](../src/tools/open-in-explorer.ts) |
 
 ---
 
-## 共通の設計方針
+## Common design principles
 
-- **読み取り専用**: `svn` の読み取り系サブコマンドのみ許可（`SvnClient` の allowlist で保証）。commit / delete / copy / move / import / add / revert / update / merge / lock / propset 等は実行できない
-- **生の svn 出力を返す**: 各ツールは `svn` の stdout をテキストとしてそのまま返す。LLM は人間と同じテキストを読む
-- **Docker / 直接 両対応**: `.env` の `SVN_USE_DOCKER` で切替（既定 `true`）
-- **UTF-8 前提**: `svn_cat` の出力は UTF-8 として扱う。バイナリファイルには使わない
-- **パスは絶対 / 相対両対応**: `path` 引数は `'/' で始める`とリポジトリルート起点の絶対パス、`'/' なし`なら `SVN_REPO_URL` 起点の相対パスとして自動解決される。`svn log -v` の "Changed paths" 出力（`/branches/...` 形式）をそのまま使える
+- **Read-only**: only the read-only subcommands of `svn` are allowed (guaranteed by the allowlist in `SvnClient`). commit / delete / copy / move / import / add / revert / update / merge / lock / propset etc. cannot be executed
+- **Raw svn output is returned**: each tool returns the stdout of `svn` as text, unmodified. The LLM reads the same text a human would
+- **Docker / direct both supported**: switched via `SVN_USE_DOCKER` in `.env` (default `true`)
+- **UTF-8 assumed**: the output of `svn_cat` is treated as UTF-8. Do not use it on binary files
+- **Paths can be absolute or relative**: a `path` argument that `starts with '/'` is an absolute path from the repository root; one `without a leading '/'` is resolved as relative to `SVN_REPO_URL`. The "Changed paths" output of `svn log -v` (in the `/branches/...` form) can be used as-is
+- **Messages emitted by the server** (error text, the `message` field of JSON results) are currently in Japanese. Where this document quotes them verbatim, an English gloss follows in parentheses
 
 ---
 
 ## svn_describe
 
-### 何をするか
+### What it does
 
-リポジトリの「自己紹介」を返す。**セッション開始時にまず呼ぶ**ことを想定したツール。
-LLM が「どこに何があるか分からない」迷子状態になるのを防ぐ。
+Returns a "self-introduction" of the repository. Intended to be **called first at the start of a session**.
+Prevents the LLM from getting "lost" without knowing what is where.
 
-内部で `svn info` と `svn list` を 1 回ずつ並列実行し、結果をマージして返す。
+Internally runs `svn info` and `svn list` once each in parallel and returns the merged result.
 
-### 引数
+### Arguments
 
-なし。
+None.
 
-### 返却値
+### Return value
 
 ```jsonc
 {
   "repo_url": "file:///svn-repo/my-repo",
-  "repository_root": "file:///svn-repo/my-repo",   // svn info の Repository Root
-  "repo_url_is_deep": false,                        // true なら SVN_REPO_URL がルートより深い位置
+  "repository_root": "file:///svn-repo/my-repo",   // Repository Root from svn info
+  "repo_url_is_deep": false,                        // true if SVN_REPO_URL is deeper than the root
   "docker_mode": true,
   "head_revision": 142,
   "top_level": ["branches/", "tags/", "trunk/"],
   "tools_available": {
-    "show_diff_external": true,    // SVN_EXTERNAL_DIFF_TOOL 設定済み
-    "show_log_tortoise": false,    // SVN_TORTOISE_PROC 未設定
-    "open_in_explorer": true       // SVN_WORKING_COPY 設定済み
+    "show_diff_external": true,    // SVN_EXTERNAL_DIFF_TOOL is set
+    "show_log_tortoise": false,    // SVN_TORTOISE_PROC is unset
+    "open_in_explorer": true       // SVN_WORKING_COPY is set
   },
   "hint": "trunk / branches / tags の標準レイアウト。ファイル探索は通常 trunk/ 配下から始める。",
   "info_raw": "Path: ...\nURL: ...\nRevision: 142\n..."
 }
 ```
 
-`hint` は `trunk/` `branches/` `tags/` の有無から自動生成する。標準レイアウトなら「trunk/ から探せ」、そうでなければ「top_level を見て構造を判断せよ」。
+`hint` is generated automatically from the presence of `trunk/` `branches/` `tags/`. For the standard layout it says (in Japanese) "standard trunk / branches / tags layout; start file exploration under trunk/"; otherwise "look at top_level to judge the structure".
 
-### よく使うクエリ例
+### Common queries
 
 ```
-セッション開始時の準備
+Preparation at session start
 → svn_describe()
-→ 返却内容を元に、以降の svn_log / svn_diff のパスを組み立てる
+→ Build the paths for subsequent svn_log / svn_diff calls from the returned content
 ```
 
-### 注意
+### Notes
 
-- 2 回 svn を叩くので毎回呼ぶと多少コストあり。**セッション開始時の 1 回**で十分
-- ツール可用性は MCP サーバ起動時の `.env` で決まる。`.env` を変えたら MCP クライアントを再起動して反映させる必要あり
+- It runs svn twice, so calling it every time has some cost. **Once at session start** is enough
+- Tool availability is determined by `.env` at MCP server startup. After changing `.env`, restart the MCP client for it to take effect
 
 ---
 
 ## svn_info
 
-### 何をするか
+### What it does
 
-`svn info` を実行して、リポジトリまたは指定パスのメタ情報（URL・最終リビジョン・最終更新者・最終更新日時など）を返す。
+Runs `svn info` and returns metadata for the repository or the given path (URL, last revision, last author, last changed date, etc.).
 
-- リポジトリの存在確認
-- HEAD リビジョン番号の取得（他ツールで `to_rev` に使う等）
-- 「このパスは本当に存在するか」のチェック
+- Confirm the repository exists
+- Get the HEAD revision number (e.g. to use as `to_rev` in other tools)
+- Check "does this path really exist"
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `path` | string | — | リポジトリルート | リポジトリ内の相対パス（例: `trunk`、`trunk/src/foo.cpp`） |
+| `path` | string | — | repository root | Relative path in the repository (e.g. `trunk`, `trunk/src/foo.cpp`) |
 
-### 返却値
+### Return value
 
-`svn info` の生の stdout を文字列で返す。例：
+The raw stdout of `svn info` as a string. Example:
 
 ```
 Path: trunk
@@ -114,41 +115,41 @@ Last Changed Rev: 142
 Last Changed Date: 2026-05-19 13:26:22 +0900 (Tue, 19 May 2026)
 ```
 
-### よく使うクエリ例
+### Common queries
 
 ```
-リポジトリの HEAD を確認
+Check the repository HEAD
 → svn_info()                    # Revision: 142
 
-trunk の最終更新者を確認
+Check the last author of trunk
 → svn_info({ path: "trunk" })
 
-特定ファイルが存在するか確認
-→ svn_info({ path: "trunk/src/foo.cpp" })   # 存在しなければ SvnError
+Check whether a specific file exists
+→ svn_info({ path: "trunk/src/foo.cpp" })   # SvnError if it does not exist
 ```
 
 ---
 
 ## svn_list
 
-### 何をするか
+### What it does
 
-`svn list`（または `-R` 付きで `svn list -R`）でファイル／ディレクトリ一覧を返す。
+Returns a file / directory listing via `svn list` (or `svn list -R` with recursion).
 
-- チケットに記載されたファイル名から実パスを探す
-- 修正対象ファイルの存在確認
-- 再帰的に全ファイル列挙
+- Find the real path from a file name mentioned in a ticket
+- Confirm the existence of a file to be modified
+- Enumerate all files recursively
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `path` | string | — | リポジトリルート | リポジトリ内の相対パス（例: `trunk/src`） |
-| `recursive` | boolean | — | `false` | true で `-R`（再帰）。大規模リポジトリでは出力が膨大になる |
+| `path` | string | — | repository root | Relative path in the repository (e.g. `trunk/src`) |
+| `recursive` | boolean | — | `false` | true for `-R` (recursive). Output becomes huge on large repositories |
 
-### 返却値
+### Return value
 
-`svn list` の生の stdout。
+The raw stdout of `svn list`.
 
 ```
 README.md
@@ -158,51 +159,51 @@ src/index.ts
 src/tools/
 ```
 
-`recursive=true` のときはサブディレクトリの中身まで全部出る。
+With `recursive=true`, the contents of subdirectories are all included.
 
-### よく使うクエリ例
+### Common queries
 
 ```
-trunk 直下のディレクトリ／ファイル一覧
+List directories / files directly under trunk
 → svn_list({ path: "trunk" })
 
-src 配下を全て列挙（再帰）
+Enumerate everything under src (recursive)
 → svn_list({ path: "trunk/src", recursive: true })
 ```
 
-### 注意
+### Notes
 
-- 大きなリポジトリで `recursive=true` を呼ぶと出力が長大になりトークンを大量消費する。必要なときだけ使う
-- 末尾 `/` でディレクトリを表すので、ファイル名だけ抽出したいなら呼び出し側でフィルタする
+- Calling with `recursive=true` on a large repository produces very long output and consumes many tokens. Use only when needed
+- Directories are marked with a trailing `/`, so filter on the caller side if you only want file names
 
 ---
 
 ## svn_log
 
-### 何をするか
+### What it does
 
-`svn log` でコミット履歴を返す。
+Returns commit history via `svn log`.
 
-**最も使うツール**。あるパスについて「最近どのコミットで変更されたか」を特定する起点。
+**The most-used tool**. The starting point for identifying "which recent commits changed this path".
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `path` | string | — | リポジトリ全体 | リポジトリ内の相対パス。指定すると、そのパスへの変更履歴のみ |
-| `limit` | integer (>0) | — | なし（全件） | 取得コミット数の上限（`--limit N`）。履歴の長いファイルでは 20〜50 程度に絞る |
-| `verbose` | boolean | — | `false` | true で各コミットの変更パス一覧（A/M/D）も付与（`-v`） |
-| `from_rev` | integer or string | — | — | 範囲指定の開始リビジョン（`to_rev` と併用。日付範囲とは排他） |
-| `to_rev` | integer or string | — | — | 範囲指定の終了リビジョン（例: `200` or `"HEAD"`） |
-| `from_date` | string (YYYY-MM-DD) | — | — | 日付範囲の開始（`to_date` と併用。リビジョン範囲とは排他） |
-| `to_date` | string (YYYY-MM-DD) | — | — | 日付範囲の終了 |
-| `message_contains` | string | — | — | コミットメッセージ／著者／変更パスの部分一致検索（`svn log --search`） |
+| `path` | string | — | whole repository | Relative path in the repository. When given, only the change history of that path |
+| `limit` | integer (>0) | — | none (all) | Upper bound on the number of commits (`--limit N`). For files with long histories, keep it around 20–50 |
+| `verbose` | boolean | — | `false` | true to include the list of changed paths (A/M/D) for each commit (`-v`) |
+| `from_rev` | integer or string | — | — | Start revision of a range (used with `to_rev`. Mutually exclusive with the date range) |
+| `to_rev` | integer or string | — | — | End revision of a range (e.g. `200` or `"HEAD"`) |
+| `from_date` | string (YYYY-MM-DD) | — | — | Start of a date range (used with `to_date`. Mutually exclusive with the revision range) |
+| `to_date` | string (YYYY-MM-DD) | — | — | End of a date range |
+| `message_contains` | string | — | — | Substring search over commit message / author / changed paths (`svn log --search`) |
 
-`from_rev` のみ／`to_rev` のみの片方指定でも、不足側はそれぞれ `1` / `HEAD` で補完される（`SvnClient.log` の挙動）。
+If only one of `from_rev` / `to_rev` is given, the missing side is filled in with `1` / `HEAD` respectively (behavior of `SvnClient.log`).
 
-### 返却値
+### Return value
 
-`svn log` の生の stdout（`-v` 指定ありなら変更パス一覧付き）。
+The raw stdout of `svn log` (with the changed-paths list if `-v` was given).
 
 ```
 ------------------------------------------------------------------------
@@ -211,31 +212,31 @@ Changed paths:
    M /trunk/src/foo.cpp
    A /trunk/src/bar.cpp
 
-リファクタリング: 共通処理を utils へ抽出
+Refactor: extract common processing into utils
 ------------------------------------------------------------------------
 r141 | bob | 2026-05-18 09:11:03 +0900 (Mon, 18 May 2026) | 1 line
 ...
 ```
 
-### よく使うクエリ例
+### Common queries
 
 ```
-特定ファイルの最近の変更コミット 10 件
+The 10 most recent commits that changed a specific file
 → svn_log({ path: "trunk/src/foo.cpp", limit: 10, verbose: true })
 
-リビジョン範囲（100〜HEAD）の全コミット
+All commits in a revision range (100–HEAD)
 → svn_log({ from_rev: 100, to_rev: "HEAD", verbose: true })
 
-リポジトリ全体の最新 5 件
+The 5 most recent commits in the whole repository
 → svn_log({ limit: 5 })
 
-チケット番号 #1234 を含むコミットを検索
+Search for commits containing ticket number #1234
 → svn_log({ message_contains: "#1234" })
 
-日付範囲で絞り込み（チケット起票日付近）
+Narrow by date range (around the date a ticket was filed)
 → svn_log({ from_date: "2026-04-10", to_date: "2026-04-20", path: "trunk/src" })
 
-組み合わせ: trunk 配下で 4月のlogin関連のコミット
+Combined: login-related commits under trunk in April
 → svn_log({
     path: "trunk",
     message_contains: "login",
@@ -244,80 +245,80 @@ r141 | bob | 2026-05-18 09:11:03 +0900 (Mon, 18 May 2026) | 1 line
   })
 ```
 
-### 注意
+### Notes
 
-- `path` を指定すると、そのパスを touch していないコミットは出ない
-- `verbose=true` は出力が膨らむが、対象ファイルを推測する用途では有用
-- `message_contains` は **コミットメッセージ・著者・変更パス**を横断検索するので、author 名を渡しても効く（ただし他のフィールドにもマッチする可能性あり）
-- リビジョン範囲（`from_rev`/`to_rev`）と日付範囲（`from_date`/`to_date`）は**排他**。両方指定するとエラー
+- When `path` is given, commits that did not touch that path are not shown
+- `verbose=true` inflates the output, but is useful for guessing which files are relevant
+- `message_contains` searches **across commit message, author, and changed paths**, so passing an author name also works (though it may match other fields too)
+- The revision range (`from_rev`/`to_rev`) and the date range (`from_date`/`to_date`) are **mutually exclusive**. Specifying both is an error
 
 ---
 
 ## svn_cat
 
-### 何をするか
+### What it does
 
-`svn cat -r REV PATH` で、指定リビジョン時点のファイル内容を返す。
+Returns the file contents at the given revision via `svn cat -r REV PATH`.
 
-- 修正前後の比較（ハンク単位）
-- 「このリビジョン時点のコードはどうなっていたか」の確認
-- ログメッセージとの照合
+- Compare before / after a fix (hunk by hunk)
+- Check "what did the code look like at this revision"
+- Cross-check against log messages
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `revision` | integer (>0) or `"HEAD"` | ✓ | — | リビジョン番号、または `"HEAD"` |
-| `path` | string | ✓ | — | リポジトリ内の相対パス（例: `trunk/src/foo.cpp`） |
+| `revision` | integer (>0) or `"HEAD"` | ✓ | — | Revision number, or `"HEAD"` |
+| `path` | string | ✓ | — | Relative path in the repository (e.g. `trunk/src/foo.cpp`) |
 
-### 返却値
+### Return value
 
-ファイル内容そのもの（UTF-8 テキストとして）。
+The file contents themselves (as UTF-8 text).
 
-### よく使うクエリ例
+### Common queries
 
 ```
-r142 時点の foo.cpp
+foo.cpp at r142
 → svn_cat({ revision: 142, path: "trunk/src/foo.cpp" })
 
-最新版
+Latest version
 → svn_cat({ revision: "HEAD", path: "trunk/README.md" })
 ```
 
-### 注意
+### Notes
 
-- **バイナリファイルには使わない**: 出力は UTF-8 として読まれるので、画像・実行ファイル等は文字化けする
-- 大きなファイルは応答が膨らむ。必要なら呼び出し側で行範囲を絞る（svn 側に行範囲取得 API は無いため、全文取得後にスライスする運用）
-- 削除済みリビジョンのファイルを cat するときは、削除前のリビジョン番号を指定する
+- **Do not use on binary files**: the output is read as UTF-8, so images, executables, etc. become garbage
+- Large files produce large responses. If needed, narrow the line range on the caller side (svn has no line-range API, so the practice is to fetch the whole file and slice)
+- To cat a file at a revision after it was deleted, specify a revision number from before the deletion
 
 ---
 
 ## svn_diff
 
-### 何をするか
+### What it does
 
-`svn diff` で unified diff を返す。
+Returns a unified diff via `svn diff`.
 
-- 単一リビジョンの変更内容（`-c REV`）
-- リビジョン範囲の差分（`-r FROM:TO`）
-- 特定ファイルに絞った差分
+- Changes of a single revision (`-c REV`)
+- Diff over a revision range (`-r FROM:TO`)
+- Diff narrowed to a specific file
 
-ハンク単位の分析や、複数チケットの修正が混在するコミットからの抽出に使う。
+Used for hunk-level analysis, or extracting a fix from a commit that mixes several tickets' changes.
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `change_rev` | integer (>0) | — | — | 単一リビジョンの差分（`-c REV`）。`from_rev`/`to_rev` を使わない場合に指定 |
-| `from_rev` | integer (>0) | — | — | 範囲差分の開始リビジョン（`to_rev` と併用） |
-| `to_rev` | integer (>0) or `"HEAD"` | — | — | 範囲差分の終了リビジョン（`from_rev` と併用） |
-| `path` | string | — | リビジョン全体 | 特定パスに絞る（例: `trunk/src/foo.cpp`） |
+| `change_rev` | integer (>0) | — | — | Diff of a single revision (`-c REV`). Use when not using `from_rev`/`to_rev` |
+| `from_rev` | integer (>0) | — | — | Start revision of a range diff (used with `to_rev`) |
+| `to_rev` | integer (>0) or `"HEAD"` | — | — | End revision of a range diff (used with `from_rev`) |
+| `path` | string | — | whole revision | Narrow to a specific path (e.g. `trunk/src/foo.cpp`) |
 
-**`change_rev` か `from_rev`+`to_rev` のどちらか必須**。両方とも指定しないとエラー。
+**Either `change_rev` or `from_rev`+`to_rev` is required**. Specifying neither is an error.
 
-### 返却値
+### Return value
 
-unified diff の生のテキスト。差分なしのときは `(差分なし)`。
+The raw text of the unified diff. When there is no difference: `(差分なし)` (meaning "no differences").
 
 ```
 Index: trunk/src/foo.cpp
@@ -329,44 +330,44 @@ Index: trunk/src/foo.cpp
 +  const TIMEOUT_MS = 30000;
 ```
 
-### よく使うクエリ例
+### Common queries
 
 ```
-r142 の変更内容を全部
+All changes in r142
 → svn_diff({ change_rev: 142 })
 
-r142 の中で foo.cpp の変更だけ
+Only the foo.cpp change within r142
 → svn_diff({ change_rev: 142, path: "trunk/src/foo.cpp" })
 
-r100〜HEAD の foo.cpp の累積差分
+Cumulative diff of foo.cpp from r100 to HEAD
 → svn_diff({ from_rev: 100, to_rev: "HEAD", path: "trunk/src/foo.cpp" })
 ```
 
-### 注意
+### Notes
 
-- 大きなコミットの全差分は出力が膨大になる。`path` で絞るのが基本
-- バイナリファイルは `Cannot display: file marked as a binary type.` のような行になり、内容は出ない（svn の仕様）
+- The full diff of a large commit produces huge output. Narrowing with `path` is the norm
+- Binary files show up as a line like `Cannot display: file marked as a binary type.` with no content (svn behavior)
 
 ---
 
 ## svn_blame
 
-### 何をするか
+### What it does
 
-指定パスについて **行ごとに「最後に変更したリビジョン・著者」** を返す（`svn blame PATH`）。
+For the given path, returns **the "last-modified revision and author" of every line** (`svn blame PATH`).
 
-「**このバグはいつ誰が入れた？**」「この行はなぜこうなっている？」を調べる定番。blame で判明したリビジョン番号を起点に `svn_log` / `svn_diff` / `svn_cat` を呼んで原因コミットを特定する流れ。
+The standard way to answer "**when and by whom was this bug introduced?**" or "why is this line like this?". The usual flow is to take the revision number found via blame as the starting point and call `svn_log` / `svn_diff` / `svn_cat` to identify the causing commit.
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `path` | string | ✓ | — | リポジトリ内の相対パス。テキストファイル限定 |
-| `revision` | integer (>0) or `"HEAD"` or 数字文字列 | — | `HEAD` | blame を取るリビジョン |
+| `path` | string | ✓ | — | Relative path in the repository. Text files only |
+| `revision` | integer (>0) or `"HEAD"` or digit string | — | `HEAD` | Revision at which to take the blame |
 
-### 返却値
+### Return value
 
-`svn blame` の生 stdout。例：
+The raw stdout of `svn blame`. Example:
 
 ```
    140    alice  #include <stdio.h>
@@ -378,53 +379,53 @@ r100〜HEAD の foo.cpp の累積差分
    140    alice  }
 ```
 
-左から「リビジョン番号」「著者」「行内容」。
+From left to right: revision number, author, line content.
 
-### よく使うクエリ例
+### Common queries
 
 ```
-foo.cpp の 42 行目の責任者を知りたい
+Who is responsible for line 42 of foo.cpp?
 → svn_blame({ path: "trunk/src/foo.cpp" })
-→ 結果から 42 行目を見て、そのリビジョンを svn_log や svn_diff で深掘り
+→ Look at line 42 in the result, then dig into that revision with svn_log or svn_diff
 
-過去のあるリビジョン時点での blame
+Blame as of a past revision
 → svn_blame({ path: "trunk/src/foo.cpp", revision: 100 })
 ```
 
-### バグ調査の典型フロー
+### Typical bug-investigation flow
 
 ```
-1. svn_blame で問題行の最終変更リビジョン X を特定
-2. svn_log({ from_rev: X, to_rev: X, verbose: true }) でそのコミットの内容を確認
-3. svn_diff({ change_rev: X, path: "..." }) で具体的な変更内容を見る
-4. 必要なら svn_cat で前後リビジョンのファイル全体を比較
+1. Use svn_blame to find the last-modified revision X of the problematic line
+2. svn_log({ from_rev: X, to_rev: X, verbose: true }) to see what that commit did
+3. svn_diff({ change_rev: X, path: "..." }) to see the concrete change
+4. If needed, compare whole files before / after with svn_cat
 ```
 
-### 注意
+### Notes
 
-- **バイナリファイルには使わない**: テキスト前提
-- **大きなファイルは重い**: svn 側で全履歴を辿るため、巨大ファイルは応答が遅い
-- 削除済みファイルは blame できない（過去リビジョン指定で対応可能）
+- **Do not use on binary files**: text is assumed
+- **Large files are slow**: svn walks the entire history, so huge files respond slowly
+- Deleted files cannot be blamed (work around by specifying a past revision)
 
 ---
 
 ## find_path
 
-### 何をするか
+### What it does
 
-作業コピー（ローカル WC）配下で **WC 相対パスを部分一致検索**する。ファイル名・フォルダ名・パスの任意の一部、どこを指定してもマッチする。「`foo.cpp` ってどこ？」「`src/external` 配下のファイル」を SVN サーバを叩かずに即答できる。
+Performs a **substring search on WC-relative paths** under the working copy (local WC). A file name, folder name, or any part of the path matches. Answers "where is `foo.cpp`?" or "files under `src/external`" instantly without hitting the SVN server.
 
-`svn list -R` でリポジトリ全体を取得して LLM 側で grep するよりも高速・低トークン。
+Faster and cheaper in tokens than fetching the whole repository with `svn list -R` and grepping on the LLM side.
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `pattern` | string | ✓ | — | WC 相対パスの**部分一致**パターン（大小無視、`\` → `/` 正規化）。ファイル名・フォルダ名・パス全体のどこに含まれていても OK |
-| `base` | string | — | WC 全体 | WC ルートからの相対起点（例: `trunk/src`） |
-| `limit` | integer | — | `50` | 返却件数上限（最大 500） |
+| `pattern` | string | ✓ | — | **Substring** pattern for the WC-relative path (case-insensitive, `\` → `/` normalized). May appear anywhere in the file name, folder name, or full path |
+| `base` | string | — | whole WC | Relative starting point from the WC root (e.g. `trunk/src`) |
+| `limit` | integer | — | `50` | Upper bound on returned results (max 500) |
 
-### 返却値
+### Return value
 
 ```jsonc
 {
@@ -443,73 +444,75 @@ foo.cpp の 42 行目の責任者を知りたい
 }
 ```
 
-### 前提
+(`warning` means: "This is a WC-based search. If you have not run svn update recently, newly added files may not appear.")
 
-- `SVN_WORKING_COPY` が設定されていること
-- WC が最新であること（新規追加ファイルを見つけたいなら `svn update` 必要）
+### Prerequisites
 
-### よく使うクエリ例
+- `SVN_WORKING_COPY` must be set
+- The WC must be up to date (`svn update` is required to find newly added files)
+
+### Common queries
 
 ```
-foo.cpp ってどこ？
+Where is foo.cpp?
 → find_path({ pattern: "foo.cpp" })
 
-サブパスで絞る
+Narrow by sub-path
 → find_path({ pattern: "src/external/foo.cpp" })
 
-外部由来のパスをそのまま投げる（prefix が WC に無くても末尾が一致すれば OK）
+Pass an externally-sourced path as-is (OK even if the prefix does not exist in the WC, as long as the tail matches)
 → find_path({ pattern: "XYZ/my-repo/extend/foo.cpp" })
 
-フォルダ配下を列挙
+Enumerate everything under a folder
 → find_path({ pattern: "extend/" })
 
-trunk/src 配下の cpp ファイルだけ
+Only cpp files under trunk/src
 → find_path({ pattern: ".cpp", base: "trunk/src" })
 ```
 
-### 重要な用途: 外部由来のパス正規化
+### Important use: normalizing externally-sourced paths
 
-チケット管理ツール本文や会話で出てきたパス文字列（例: `XYZ/my-repo/extend/foo.cpp` のようにプロジェクト名 prefix 付き）を **そのまま投げて正規化**できる。
+Path strings that appear in ticketing-tool bodies or conversation (e.g. `XYZ/my-repo/extend/foo.cpp`, with a project-name prefix) can be **passed as-is to normalize them**.
 
 ```
-外部由来: "XYZ/my-repo/extend/foo.cpp"
+External input: "XYZ/my-repo/extend/foo.cpp"
 → find_path({ pattern: "XYZ/my-repo/extend/foo.cpp" })
-→ パスの末尾「extend/foo.cpp」が WC 内のパスに含まれれば hit
-→ matches: [{ path: "trunk/src/extend/foo.cpp" }]   // 正しい WC 相対パス
-→ 以降の svn_log / svn_diff にはこれを使う → URL 二重化を根本的に回避
+→ Hits if the tail of the path, "extend/foo.cpp", is contained in a WC path
+→ matches: [{ path: "trunk/src/extend/foo.cpp" }]   // the correct WC-relative path
+→ Use this for subsequent svn_log / svn_diff → fundamentally avoids doubled URLs
 ```
 
-basename 抽出は不要（パスの任意部分一致なのでそのまま投げる）。詳しくは [copilot-instructions.example.md](../copilot-instructions.example.md) の「外部由来のパスは find_path で正規化してから使う」参照。
+No basename extraction is needed (it is a substring match on any part of the path, so pass it as-is). For details, see "Normalize externally-sourced paths with find_path before using them" in [copilot-instructions.example.md](../copilot-instructions.example.md).
 
-### 注意
+### Notes
 
-- `.svn` ディレクトリは自動スキップ
-- 大文字小文字を区別しない（"FOO.cpp" でも "foo.cpp" でもヒット）
-- `\` は自動で `/` に正規化されるので Windows 区切りでも OK
-- 短いパターン（`"src"` 等）だと大量ヒットしがち。基本は具体名でクエリ
+- `.svn` directories are skipped automatically
+- Case-insensitive ("FOO.cpp" and "foo.cpp" both hit)
+- `\` is normalized to `/` automatically, so Windows separators are fine
+- Short patterns (`"src"` etc.) tend to produce many hits. Query with specific names as a rule
 
 ---
 
 ## grep_in_repo
 
-### 何をするか
+### What it does
 
-作業コピー（ローカル WC）内の **テキストファイルからキーワードを grep** する。「関数 `do_login` を呼んでる場所」「このエラーメッセージを出しているコード」を一発で特定。
+**Greps text files** in the working copy (local WC) for a keyword. Pinpoints "where is the function `do_login` called" or "which code emits this error message" in one shot.
 
-`svn` サーバを叩かないので高速。バイナリ・巨大ファイル（>2MB）は自動スキップ。
+Fast because it does not hit the `svn` server. Binary and huge (>2MB) files are skipped automatically.
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `query` | string | ✓ | — | 検索文字列。`is_regex: true` で正規表現 |
-| `is_regex` | boolean | — | `false` | true で query を正規表現として解釈 |
-| `case_insensitive` | boolean | — | `false` | 大小無視 |
-| `path_filter` | string | — | — | ファイル名の部分一致フィルタ（例: `.cpp`） |
-| `base` | string | — | WC 全体 | 検索起点 |
-| `max_results` | integer | — | `100` | ヒット件数上限（最大 1000） |
+| `query` | string | ✓ | — | Search string. A regular expression when `is_regex: true` |
+| `is_regex` | boolean | — | `false` | true to interpret query as a regular expression |
+| `case_insensitive` | boolean | — | `false` | Ignore case |
+| `path_filter` | string | — | — | Substring filter on the file name (e.g. `.cpp`) |
+| `base` | string | — | whole WC | Starting point of the search |
+| `max_results` | integer | — | `100` | Upper bound on hits (max 1000) |
 
-### 返却値
+### Return value
 
 ```jsonc
 {
@@ -533,28 +536,30 @@ basename 抽出は不要（パスの任意部分一致なのでそのまま投�
 }
 ```
 
-### 前提
+(`warning` means: "This is a WC-based search. If you have not run svn update recently, the latest changes may not be reflected.")
 
-- `SVN_WORKING_COPY` が設定されていること
-- WC が最新であること（古いと最近の変更が反映されない）
+### Prerequisites
 
-### よく使うクエリ例
+- `SVN_WORKING_COPY` must be set
+- The WC must be up to date (a stale WC does not reflect recent changes)
+
+### Common queries
 
 ```
-do_login の呼び出し箇所
+Call sites of do_login
 → grep_in_repo({ query: "do_login" })
 
-"Connection refused" を出してる場所
+Where "Connection refused" is emitted
 → grep_in_repo({ query: "Connection refused" })
 
-cpp ファイルだけ正規表現で
+Regular expression, cpp files only
 → grep_in_repo({
     query: "TODO|FIXME",
     is_regex: true,
     path_filter: ".cpp"
   })
 
-trunk/src 配下で大小無視
+Case-insensitive under trunk/src
 → grep_in_repo({
     query: "logger",
     case_insensitive: true,
@@ -562,45 +567,45 @@ trunk/src 配下で大小無視
   })
 ```
 
-### スキップ条件
+### Skip conditions
 
-| 種類 | 内容 |
+| Kind | Details |
 |---|---|
-| バイナリ拡張子 | `.exe` `.dll` `.png` `.pdf` `.zip` 等は拡張子で即スキップ |
-| 巨大ファイル | 2 MB 超 |
-| NUL バイト含む | 先頭 512 バイトに `\0` があればバイナリ判定 |
-| 長すぎる行 | 1 行が 500 文字超は minified 等とみなしスキップ |
-| `.svn/` 配下 | 常にスキップ |
+| Binary extensions | `.exe` `.dll` `.png` `.pdf` `.zip` etc. are skipped immediately by extension |
+| Huge files | Over 2 MB |
+| Contains NUL bytes | Treated as binary if there is a `\0` in the first 512 bytes |
+| Overly long lines | A line over 500 characters is treated as minified etc. and skipped |
+| Under `.svn/` | Always skipped |
 
-### 注意
+### Notes
 
-- 大規模リポジトリで「全 `path_filter` 無し + よくある単語」だと結果膨大に。なるべく絞る
-- 正規表現エラーは即エラー応答
-- 行表示は 200 文字までで `…` で切り詰め
+- On a large repository, "no `path_filter` + a common word" yields enormous results. Narrow as much as possible
+- A regular-expression error is returned immediately as an error response
+- Displayed lines are truncated to 200 characters with `…`
 
 ---
 
 ## show_diff_external
 
-### 何をするか
+### What it does
 
-指定 2 リビジョン × ファイルパス を一時ファイルに展開し、**外部 GUI 差分ツール**（WinMerge 等）を起動する。
+Writes the given 2 revisions × file path to temp files and launches an **external GUI diff tool** (WinMerge etc.).
 
-- LLM が自動判定した修正候補を、人間が**目視確認**する用途
-- AI による誤判定の最終チェック
-- 修正の文脈（前後関係）を見たいとき
+- For a human to **visually verify** fix candidates the LLM identified automatically
+- Final check against AI misjudgment
+- When you want to see the context (surrounding code) of a fix
 
-GUI 起動なので **MCP サーバはホスト OS（Windows/macOS）で動かす必要がある**。Docker / WSL2 内で動かすと表示されない。
+Because it launches a GUI, **the MCP server must run on the host OS (Windows/macOS)**. Nothing appears if it runs inside Docker / WSL2.
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `revision_before` | integer (>0) | ✓ | — | 修正前のリビジョン番号 |
-| `revision_after` | integer (>0) | ✓ | — | 修正後のリビジョン番号 |
-| `path` | string | ✓ | — | リポジトリ内の相対パス |
+| `revision_before` | integer (>0) | ✓ | — | Revision number before the fix |
+| `revision_after` | integer (>0) | ✓ | — | Revision number after the fix |
+| `path` | string | ✓ | — | Relative path in the repository |
 
-### 返却値
+### Return value
 
 ```jsonc
 {
@@ -612,25 +617,28 @@ GUI 起動なので **MCP サーバはホスト OS（Windows/macOS）で動か�
 }
 ```
 
-実行内容:
-1. `svn cat -r <revision_before> <path>` と `svn cat -r <revision_after> <path>` でファイル取得
-2. `os.tmpdir()/svn-mcp-diff-XXXX/r<rev>_<basename>` に書き出し
-3. `<toolPath> <leftFile> <rightFile>` を **detached** で spawn
-4. ツール終了を待たず即時応答
+(`message` means: "Launched the external diff tool.")
 
-### 前提
+What it executes:
+1. Fetches the files with `svn cat -r <revision_before> <path>` and `svn cat -r <revision_after> <path>`
+2. Writes them to `os.tmpdir()/svn-mcp-diff-XXXX/r<rev>_<basename>`
+3. Spawns `<toolPath> <leftFile> <rightFile>` **detached**
+4. Responds immediately without waiting for the tool to exit
 
-- `.env` に `SVN_EXTERNAL_DIFF_TOOL` が設定されていること。未設定なら呼び出し時にエラー：
+### Prerequisites
+
+- `SVN_EXTERNAL_DIFF_TOOL` must be set in `.env`. If unset, calling it returns an error:
   ```
   外部差分ツールが未設定です。環境変数 SVN_EXTERNAL_DIFF_TOOL を .env に設定してください。
   例: SVN_EXTERNAL_DIFF_TOOL=C:\Program Files\WinMerge\WinMergeU.exe
   ```
-- MCP サーバがホスト OS で動いていること（Docker 内では GUI が表示されない）
+  (meaning: "The external diff tool is not configured. Set the environment variable SVN_EXTERNAL_DIFF_TOOL in .env. Example: ...")
+- The MCP server must be running on the host OS (a GUI does not show inside Docker)
 
-### よく使うクエリ例
+### Common queries
 
 ```
-r141 → r142 の foo.cpp を WinMerge で開く
+Open foo.cpp r141 → r142 in WinMerge
 → show_diff_external({
     revision_before: 141,
     revision_after: 142,
@@ -638,32 +646,32 @@ r141 → r142 の foo.cpp を WinMerge で開く
   })
 ```
 
-### 注意
+### Notes
 
-- 一時ファイルは OS のクリーンアップに任せる（明示削除しない。GUI が掴んでいる間に消すと不具合になる）
-- WinMerge 以外のツール（KDiff3, Beyond Compare 等）も `<tool> <left> <right>` 形式で起動できれば動くはず
+- Temp files are left to OS cleanup (not deleted explicitly — deleting them while the GUI holds them causes problems)
+- Tools other than WinMerge (KDiff3, Beyond Compare, etc.) should also work as long as they can be launched in the `<tool> <left> <right>` form
 
 ---
 
 ## show_log_tortoise
 
-### 何をするか
+### What it does
 
-指定パスに対する **TortoiseSVN のログダイアログ**（`TortoiseProc.exe /command:log`）を起動する。
+Launches the **TortoiseSVN log dialog** (`TortoiseProc.exe /command:log`) for the given path.
 
-- LLM が推定した修正候補を、人間が **TortoiseSVN で目視確認**する用途
-- 「対象ファイルを右クリック → TortoiseSVN → Show Log」と同じ操作を AI 経由で実行
-- 内容の信頼性に不安があるときに、人間が普段使う UI で見直せる
+- For a human to **visually verify in TortoiseSVN** fix candidates the LLM inferred
+- Performs the same operation as "right-click the target file → TortoiseSVN → Show Log", via the AI
+- Lets a human review in the UI they normally use when the reliability of the content is in doubt
 
-GUI 起動なので **MCP サーバはホスト OS（Windows）で動かす必要がある**。
+Because it launches a GUI, **the MCP server must run on the host OS (Windows)**.
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `path` | string | — | リポジトリルート | リポジトリ内の相対パス（例: `trunk/src/foo.cpp`、`trunk/src`） |
+| `path` | string | — | repository root | Relative path in the repository (e.g. `trunk/src/foo.cpp`, `trunk/src`) |
 
-### 返却値
+### Return value
 
 ```jsonc
 {
@@ -674,62 +682,65 @@ GUI 起動なので **MCP サーバはホスト OS（Windows）で動かす必�
 }
 ```
 
-実行内容:
-1. `SVN_REPO_URL_CLIENT`（未設定なら `SVN_REPO_URL`）と `path` を連結してターゲットパスを作る
-2. `<TortoiseProc.exe> /command:log /path:<target> /closeonend:0` を **detached** で spawn
-3. ツール終了を待たず即時応答
+(`message` means: "Launched the TortoiseSVN log dialog.")
 
-### 前提
+What it executes:
+1. Builds the target path by joining `SVN_REPO_URL_CLIENT` (falls back to `SVN_REPO_URL` when unset) with `path`
+2. Spawns `<TortoiseProc.exe> /command:log /path:<target> /closeonend:0` **detached**
+3. Responds immediately without waiting for the tool to exit
 
-- `.env` に `SVN_TORTOISE_PROC` が設定されていること。未設定なら呼び出し時にエラー：
+### Prerequisites
+
+- `SVN_TORTOISE_PROC` must be set in `.env`. If unset, calling it returns an error:
   ```
   TortoiseSVN が未設定です。環境変数 SVN_TORTOISE_PROC を .env に設定してください。
   例: SVN_TORTOISE_PROC=C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe
   ```
-- MCP サーバがホスト OS（Windows）で動いていること
-- **`SVN_REPO_URL` が Windows 側 TortoiseSVN から到達可能であること**。Docker 内 `file:///svn-repo/...` は Windows から見えないため、その場合は `.env` に `SVN_REPO_URL_CLIENT` を設定して Windows 到達可能な URL（`https://...`, `svn+ssh://...`）または作業コピーの絶対パス（`C:\path\to\wc`）を別途指定する
+  (meaning: "TortoiseSVN is not configured. Set the environment variable SVN_TORTOISE_PROC in .env. Example: ...")
+- The MCP server must be running on the host OS (Windows)
+- **`SVN_REPO_URL` must be reachable from TortoiseSVN on the Windows side**. A `file:///svn-repo/...` inside Docker is not visible from Windows; in that case set `SVN_REPO_URL_CLIENT` in `.env` to a Windows-reachable URL (`https://...`, `svn+ssh://...`) or the absolute path of a working copy (`C:\path\to\wc`)
 
-### よく使うクエリ例
+### Common queries
 
 ```
-foo.cpp のログを TortoiseSVN で開く
+Open the log of foo.cpp in TortoiseSVN
 → show_log_tortoise({ path: "trunk/src/foo.cpp" })
 
-trunk/src フォルダのログを TortoiseSVN で開く（中身のサブフォルダ含む変更履歴）
+Open the log of the trunk/src folder in TortoiseSVN (history including subfolders)
 → show_log_tortoise({ path: "trunk/src" })
 
-リポジトリ全体のログ
+Log of the whole repository
 → show_log_tortoise()
 ```
 
-### 注意
+### Notes
 
-- TortoiseSVN ダイアログの開始リビジョンや件数は GUI 側でユーザが操作する（このツールの引数では制御しない）
-- TortoiseSVN が初回起動時に資格情報を要求することがある。その場合 GUI 上で入力
+- The starting revision and count in the TortoiseSVN dialog are controlled by the user in the GUI (not by this tool's arguments)
+- TortoiseSVN may ask for credentials on first launch. Enter them in the GUI if so
 
 ---
 
 ## open_in_explorer
 
-### 何をするか
+### What it does
 
-作業コピー（ローカル WC）配下の指定パスを **Windows エクスプローラ**で開く。
+Opens the given path under the working copy (local WC) in **Windows Explorer**.
 
-- ファイル指定 → `explorer.exe /select,<file>` で親フォルダを開いて当該ファイルを**ハイライト表示**
-- フォルダ指定 → `explorer.exe <folder>` でフォルダを開く
-- パス省略 → WC ルートを開く
+- File given → `explorer.exe /select,<file>` opens the parent folder with the file **highlighted**
+- Folder given → `explorer.exe <folder>` opens the folder
+- Path omitted → opens the WC root
 
-「対象ファイルを右クリックして TortoiseSVN で...」という運用の前段として、まず該当場所をエクスプローラで開きたいときに使う。
+Use it when you first want to open the location in Explorer as a prelude to "right-click the target file and use TortoiseSVN...".
 
-### 引数
+### Arguments
 
-| 名前 | 型 | 必須 | デフォルト | 説明 |
+| Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `path` | string | — | WC ルート | リポジトリ内の相対パス（例: `trunk/src/foo.cpp`、`trunk/src`） |
+| `path` | string | — | WC root | Relative path in the repository (e.g. `trunk/src/foo.cpp`, `trunk/src`) |
 
-ファイル／フォルダ判定は実 WC を `fs.statSync` で確認して自動切替する。
+File vs. folder is detected automatically by checking the real WC with `fs.statSync`.
 
-### 返却値
+### Return value
 
 ```jsonc
 {
@@ -741,43 +752,46 @@ trunk/src フォルダのログを TortoiseSVN で開く（中身のサブフォ
 }
 ```
 
-`selected: true` は `/select,` モード（ファイル選択表示）で開いたことを示す。
+(`message` means: "Launched Windows Explorer.")
 
-### 前提
+`selected: true` indicates it was opened in `/select,` mode (file-selection display).
 
-- `.env` に `SVN_WORKING_COPY` が設定されていること。未設定なら呼び出し時にエラー：
+### Prerequisites
+
+- `SVN_WORKING_COPY` must be set in `.env`. If unset, calling it returns an error:
   ```
   作業コピーが未設定です。環境変数 SVN_WORKING_COPY を .env に設定してください。
   例: SVN_WORKING_COPY=C:\path\to\working-copy
   ```
-- MCP サーバが Windows ホストで動いていること
-- `SVN_WORKING_COPY` 配下に指定パスが**実在すること**（リポジトリにあっても WC に未 checkout なら開けない）
+  (meaning: "The working copy is not configured. Set the environment variable SVN_WORKING_COPY in .env. Example: ...")
+- The MCP server must be running on a Windows host
+- The given path must **actually exist** under `SVN_WORKING_COPY` (even if it is in the repository, it cannot be opened if not checked out in the WC)
 
-### よく使うクエリ例
+### Common queries
 
 ```
-foo.cpp の場所を開く（親フォルダで選択表示）
+Open the location of foo.cpp (selected in its parent folder)
 → open_in_explorer({ path: "trunk/src/foo.cpp" })
 
-trunk/src フォルダを開く
+Open the trunk/src folder
 → open_in_explorer({ path: "trunk/src" })
 
-WC ルートを開く
+Open the WC root
 → open_in_explorer()
 ```
 
-### 注意
+### Notes
 
-- `SVN_WORKING_COPY` は SVN リポジトリ URL とは**別物**（リモートリポジトリの URL ではなくローカルパス）
-- WC が古いと指定ファイルが存在しない可能性あり。`svn update` を済ませた WC を指すのが前提
+- `SVN_WORKING_COPY` is **different** from the SVN repository URL (a local path, not the remote repository URL)
+- If the WC is stale, the given file may not exist. A WC that has had `svn update` run is assumed
 
 ---
 
-## エラーレスポンスの共通形式
+## Common format of error responses
 
-ツールが失敗すると、`isError: true` 付きで以下のような構造化テキストが返る：
+When a tool fails, structured text like the following is returned with `isError: true`:
 
-### `SvnError`（svn コマンド失敗）
+### `SvnError` (svn command failure)
 
 ```
 svn が exit code 1 で失敗しました: svn: E170000: URL 'file:///svn-repo/my-repo/notfound' non-existent in revision 142
@@ -789,35 +803,41 @@ svn が exit code 1 で失敗しました: svn: E170000: URL 'file:///svn-repo/m
 }
 ```
 
-### 引数不足（zod 検証は別エラー、ツール側のランタイム検証は errorResult）
+(The first line means: "svn failed with exit code 1: ...")
+
+### Missing arguments (zod validation is a separate error; the tool's runtime validation uses errorResult)
 
 ```
 change_rev か、from_rev と to_rev の組み合わせを指定してください。
 ```
 
-### 設定不足
+(meaning: "Specify either change_rev, or the combination of from_rev and to_rev.")
+
+### Missing configuration
 
 ```
 外部差分ツールが未設定です。環境変数 SVN_EXTERNAL_DIFF_TOOL を .env に設定してください。
 ```
 
+(meaning: "The external diff tool is not configured. Set the environment variable SVN_EXTERNAL_DIFF_TOOL in .env.")
+
 ---
 
-## 拡張する場合
+## Extending
 
-新しい読み取り系ツールを追加する手順：
+Steps to add a new read-only tool:
 
-1. `src/svn/client.ts` の `SvnClient` に対応メソッドを追加（`READ_ONLY_SUBCOMMANDS` に対応サブコマンドが入っているか確認）
-2. `src/tools/your-tool.ts` を作成（`src/tools/svn-info.ts` をテンプレートにすると最短）
-3. 以下をエクスポート：
+1. Add a corresponding method to `SvnClient` in `src/svn/client.ts` (check that the subcommand is in `READ_ONLY_SUBCOMMANDS`)
+2. Create `src/tools/your-tool.ts` (using `src/tools/svn-info.ts` as a template is quickest)
+3. Export the following:
    ```ts
    export function register(server: McpServer, ctx: ToolContext) {
      server.registerTool("your_tool", { title, description, inputSchema }, async (args) => { ... });
    }
    ```
-4. `src/index.ts` に `import` と `register(server, ctx)` 呼び出しを追加
-5. `npm run build` → 再起動
+4. Add the `import` and `register(server, ctx)` call to `src/index.ts`
+5. `npm run build` → restart
 
-このドキュメントもソースから再生成すること。
+Regenerate this document from the source as well.
 
-詳細は [ARCHITECTURE.md](ARCHITECTURE.md) の「8. 拡張方法」参照。
+For details, see "8. How to extend" in [ARCHITECTURE.md](ARCHITECTURE.md).

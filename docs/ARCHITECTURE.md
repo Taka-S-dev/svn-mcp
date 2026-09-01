@@ -1,150 +1,150 @@
-# 設計書 / アーキテクチャ（svn-mcp）
+# Design document / architecture (svn-mcp)
 
-> このプロジェクトのコードを修正する前に、まずこのドキュメントを読むこと。
-> 全体構成・設計思想・拡張方法・注意点をまとめてある。
-> ツールごとの引数仕様は [TOOLS.md](TOOLS.md)、利用者向けの導入は [../README.md](../README.md)。
+> Read this document before modifying the code of this project.
+> It summarizes the overall structure, design philosophy, how to extend it, and pitfalls.
+> Per-tool argument specifications are in [TOOLS.md](TOOLS.md); user-facing setup is in [../README.md](../README.md).
 
 ---
 
-## 1. これは何か
+## 1. What this is
 
-SVN リポジトリの **読み取り系コマンド**（log / list / cat / diff / info）を MCP（Model Context Protocol）ツールとして公開するサーバー。AI エージェント（GitHub Copilot CLI / Claude Code 等）から SVN のコミット履歴・ファイル内容・差分を読めるようにする。
+A server that exposes the **read-only commands** of an SVN repository (log / list / cat / diff / info) as MCP (Model Context Protocol) tools. It lets AI agents (GitHub Copilot CLI, Claude Code, etc.) read commit history, file contents, and diffs from SVN.
 
-- 言語: TypeScript（ESM、Node.js 22+）
-- 依存: `@modelcontextprotocol/sdk` と `zod` のみ
-- svn 実行: `node:child_process` の `spawn`（Docker 経由 / ホスト直接 の 2 モード）
-- 外部 GUI 起動: WinMerge 等を spawn（detached）
+- Language: TypeScript (ESM, Node.js 22+)
+- Dependencies: only `@modelcontextprotocol/sdk` and `zod`
+- svn execution: `spawn` from `node:child_process` (two modes: via Docker / directly on the host)
+- External GUI launch: spawn WinMerge etc. (detached)
 
-## 2. 設計思想（修正時もこれを守る）
+## 2. Design philosophy (keep to this when modifying)
 
-| 原則 | 理由 | 修正時の含意 |
+| Principle | Reason | Implications when modifying |
 |---|---|---|
-| **読み取り専用** | AI に誤更新させない安全策 | `SvnClient.execSvn` の `READ_ONLY_SUBCOMMANDS` allowlist に無いサブコマンドは実行不可。commit/delete/copy/move/import/add/revert/update/merge/lock/propset/mucc 等を意図的に除外。新ツール追加時もここを起点に判断する |
-| **依存最小** | サプライチェーンリスク低減 | 新しい npm パッケージ追加は慎重に。標準 API で済むなら使わない |
-| **Docker / 直接 の両対応** | ホストに svn が無い環境でも動かす | `useDocker=true` のとき `docker compose exec -T <service> svn ...` で実行。`composeDir` を CWD として spawn |
-| **ツール説明文＝ LLM の取扱説明書** | LLM は description を読んで使い方を判断する | description は丁寧に書く。挙動を変えたら description も必ず更新 |
-| **エラーは構造化** | LLM が自己訂正できるように | `SvnError` に `code` / `stderr` / `stdout` を載せて返す。テキストには「何が原因か」を書く |
-| **GUI 起動は detached** | MCP サーバはすぐ応答を返したい | `showDiffExternal` は `spawn(... { detached: true, stdio: "ignore" })` + `child.unref()`。終了を待たない |
+| **Read-only** | Safety measure so the AI cannot make accidental changes | Subcommands not in the `READ_ONLY_SUBCOMMANDS` allowlist of `SvnClient.execSvn` cannot run. commit/delete/copy/move/import/add/revert/update/merge/lock/propset/mucc etc. are deliberately excluded. Start from here when judging any new tool |
+| **Minimal dependencies** | Reduce supply-chain risk | Be careful about adding new npm packages. If the standard API suffices, do not add one |
+| **Docker / direct both supported** | Work even in environments without svn on the host | With `useDocker=true`, run via `docker compose exec -T <service> svn ...`, spawned with `composeDir` as the CWD |
+| **Tool descriptions = the LLM's user manual** | The LLM reads the description to decide how to use a tool | Write descriptions carefully. Whenever behavior changes, update the description too |
+| **Structured errors** | So the LLM can self-correct | Return `SvnError` carrying `code` / `stderr` / `stdout`. The text should state "what caused it" |
+| **GUI launch is detached** | The MCP server should respond immediately | `showDiffExternal` uses `spawn(... { detached: true, stdio: "ignore" })` + `child.unref()`. It does not wait for exit |
 
-## 3. 全体構成
+## 3. Overall structure
 
 ```
 src/
-├── index.ts              エントリポイント。.env 読込 → SvnClient 生成 → ツール登録 → MCP 起動
+├── index.ts              Entry point. Load .env → create SvnClient → register tools → start MCP
 ├── svn/
-│   └── client.ts         svn コマンド実行ラッパー（spawn・read-only allowlist・Docker/直接切替・タイムアウト）
+│   └── client.ts         svn command wrapper (spawn, read-only allowlist, Docker/direct switch, timeout)
 ├── external/
-│   ├── diff-tool.ts      外部差分ツール（WinMerge 等）の起動（一時ファイル展開＋detached spawn）
-│   ├── tortoise.ts       TortoiseProc.exe の起動（detached spawn）
-│   └── explorer.ts       Windows エクスプローラの起動（detached spawn・fs.statSync でファイル/フォルダ判定）
+│   ├── diff-tool.ts      Launch external diff tool (WinMerge etc.) (write temp files + detached spawn)
+│   ├── tortoise.ts       Launch TortoiseProc.exe (detached spawn)
+│   └── explorer.ts       Launch Windows Explorer (detached spawn; file/folder detection via fs.statSync)
 ├── wc/
-│   └── scanner.ts        作業コピーの再帰 walk・バイナリ判定ヘルパー（find_path / grep_in_repo が利用）
+│   └── scanner.ts        Recursive walk of the working copy and binary-detection helpers (used by find_path / grep_in_repo)
 └── tools/
-    ├── context.ts             ツール共通基盤（ToolContext / textResult / jsonResult / errorResult / runSvn）
-    ├── svn-describe.ts        セッション開始時に呼ぶ「自己紹介」ツール（info + list + ツール可用性）
+    ├── context.ts             Shared tool infrastructure (ToolContext / textResult / jsonResult / errorResult / runSvn)
+    ├── svn-describe.ts        "Self-introduction" tool called at session start (info + list + tool availability)
     ├── svn-info.ts            svn info
     ├── svn-list.ts            svn list
     ├── svn-log.ts             svn log
     ├── svn-cat.ts             svn cat
     ├── svn-diff.ts            svn diff
-    ├── svn-blame.ts           svn blame（行ごとの最終変更リビジョン・著者）
-    ├── find-path.ts           WC 内ファイル名検索（高速）
-    ├── grep-in-repo.ts        WC 内テキスト grep（高速・バイナリスキップ）
-    ├── show-diff-external.ts  外部GUI（WinMerge 等）で差分表示
-    ├── show-log-tortoise.ts   TortoiseSVN のログダイアログを開く
-    └── open-in-explorer.ts    Windows エクスプローラで開く
+    ├── svn-blame.ts           svn blame (last-modified revision and author per line)
+    ├── find-path.ts           File-name search in the WC (fast)
+    ├── grep-in-repo.ts        Text grep in the WC (fast, skips binaries)
+    ├── show-diff-external.ts  Show a diff in an external GUI (WinMerge etc.)
+    ├── show-log-tortoise.ts   Open the TortoiseSVN log dialog
+    └── open-in-explorer.ts    Open in Windows Explorer
 ```
 
-### レイヤー構造
+### Layer structure
 
 ```
-MCP クライアント（Copilot CLI / Claude Code）
-        ↓ MCP プロトコル（stdio）
-index.ts（登録された各ツール）
+MCP client (Copilot CLI / Claude Code)
+        ↓ MCP protocol (stdio)
+index.ts (each registered tool)
         ↓
-tools/*.ts（引数バリデーション・整形）
-        ↓ ToolContext 経由
-svn/client.ts（svn コマンド実行）           external/diff-tool.ts（GUI 起動）
+tools/*.ts (argument validation, formatting)
+        ↓ via ToolContext
+svn/client.ts (svn command execution)        external/diff-tool.ts (GUI launch)
         ↓                                          ↓
-   docker compose exec / 直接 svn                WinMerge 等
+   docker compose exec / direct svn              WinMerge etc.
         ↓
-   SVN リポジトリ（file:// or https://）
+   SVN repository (file:// or https://)
 ```
 
-## 4. リクエストのライフサイクル
+## 4. Request lifecycle
 
-`svn_log` を例に：
+Using `svn_log` as an example:
 
-1. LLM が `svn_log({ path: "trunk/src/foo.cpp", limit: 10, verbose: true })` を呼ぶ
-2. `index.ts` が登録したハンドラが起動、zod が引数を検証
-3. ハンドラが `ctx.svn.log(path, { limit, verbose, ... })` を呼ぶ
-4. `SvnClient.log()` が `svn log --limit 10 -v <repoUrl>/trunk/src/foo.cpp` の引数列を作る
-5. `SvnClient.execSvn()` が allowlist を通過させ、`buildCommand()` で Docker / 直接 を選択
-6. `spawnAsync()` で実プロセス起動、stdout / stderr を収集、timeout で kill
-7. 0 終了なら stdout を返し、非0 終了なら `SvnError` を投げる
-8. ハンドラが `textResult(stdout)` で MCP レスポンス化、`SvnError` は `errorResult(message, detail)` で返す
+1. The LLM calls `svn_log({ path: "trunk/src/foo.cpp", limit: 10, verbose: true })`
+2. The handler registered by `index.ts` runs; zod validates the arguments
+3. The handler calls `ctx.svn.log(path, { limit, verbose, ... })`
+4. `SvnClient.log()` builds the argument list `svn log --limit 10 -v <repoUrl>/trunk/src/foo.cpp`
+5. `SvnClient.execSvn()` checks the allowlist and `buildCommand()` chooses Docker / direct
+6. `spawnAsync()` launches the real process, collects stdout / stderr, and kills on timeout
+7. On exit code 0 the stdout is returned; on non-zero, `SvnError` is thrown
+8. The handler wraps stdout in `textResult(stdout)` as an MCP response; `SvnError` is returned via `errorResult(message, detail)`
 
-## 5. モジュール責務
+## 5. Module responsibilities
 
 ### `index.ts`
-- `.env` から設定読込（`SVN_REPO_URL` / `SVN_USE_DOCKER` / `SVN_COMPOSE_DIR` / `SVN_DOCKER_SERVICE` / `SVN_TIMEOUT_MS` / `SVN_EXTERNAL_DIFF_TOOL`）
-- 設定不整合は起動時に throw（`SVN_REPO_URL` 未設定、`SVN_USE_DOCKER=true` なのに `SVN_COMPOSE_DIR` 無し、等）
-- `SvnClient` と `DiffToolConfig` を生成し `ToolContext` を組む
-- 各ツールの `register(server, ctx)` を呼ぶ
-- **ツールを増やしたらここに import と register 呼び出しを足す**
+- Loads configuration from `.env` (`SVN_REPO_URL` / `SVN_USE_DOCKER` / `SVN_COMPOSE_DIR` / `SVN_DOCKER_SERVICE` / `SVN_TIMEOUT_MS` / `SVN_EXTERNAL_DIFF_TOOL`)
+- Throws at startup on inconsistent configuration (`SVN_REPO_URL` unset, `SVN_USE_DOCKER=true` without `SVN_COMPOSE_DIR`, etc.)
+- Creates `SvnClient` and `DiffToolConfig` and assembles the `ToolContext`
+- Calls each tool's `register(server, ctx)`
+- **When adding a tool, add the import and register call here**
 
 ### `svn/client.ts`
-- **READ_ONLY_SUBCOMMANDS allowlist**: `info` / `list` / `ls` / `log` / `cat` / `diff` / `blame` / `praise` / `annotate` / `stat` / `status` / `help` / `--version` のみ通過。それ以外は `SvnError` で即拒否。`execSvn()` の冒頭でチェックされる
-- **Docker / 直接 切替** (`buildCommand`): `useDocker=true` なら `docker compose exec -T <service> svn ...`、`composeDir` を CWD に。`useDocker=false` ならホストの `svn` を直接 spawn
-- **タイムアウト** (`spawnAsync`): `timeoutMs` 経過で `child.kill()`、エラーに「タイムアウトしました」と明記
-- 高レベル API（`info` / `list` / `log` / `cat` / `diff` / `blame`）。引数を `svn` の CLI 引数に組み立てるだけのシン層
-- **`resolveUrl(path)` の 2 形式対応** (async):
-  - 省略: `SVN_REPO_URL` を返す
-  - `'/' 始まり`: リポジトリルート起点（`getRepositoryRoot()` 経由）→ `<repo-root>/<path>`
-  - `'/' なし`: `SVN_REPO_URL` 起点 → `<SVN_REPO_URL>/<path>`
-  - `svn log -v` の "Changed paths" 出力（`/branches/X/...`）をそのまま渡せる
-- **`getRepositoryRoot()`**: 初回必要時に `svn info <SVN_REPO_URL>` を 1 回叩いて `Repository Root: ...` をパース→ `this.repositoryRoot` にキャッシュ。以後は再取得不要
-- 全メソッドは **svn の生の stdout 文字列をそのまま返す**（パースしない。LLM はテキストとして読める）
+- **READ_ONLY_SUBCOMMANDS allowlist**: only `info` / `list` / `ls` / `log` / `cat` / `diff` / `blame` / `praise` / `annotate` / `stat` / `status` / `help` / `--version` pass. Anything else is rejected immediately with `SvnError`. Checked at the top of `execSvn()`
+- **Docker / direct switch** (`buildCommand`): with `useDocker=true`, runs `docker compose exec -T <service> svn ...` with `composeDir` as the CWD. With `useDocker=false`, spawns the host's `svn` directly
+- **Timeout** (`spawnAsync`): after `timeoutMs`, `child.kill()` and the error explicitly says it timed out
+- High-level API (`info` / `list` / `log` / `cat` / `diff` / `blame`). A thin layer that only assembles `svn` CLI arguments
+- **`resolveUrl(path)` supports two forms** (async):
+  - Omitted: returns `SVN_REPO_URL`
+  - Starts with `'/'`: relative to the repository root (via `getRepositoryRoot()`) → `<repo-root>/<path>`
+  - No leading `'/'`: relative to `SVN_REPO_URL` → `<SVN_REPO_URL>/<path>`
+  - The "Changed paths" output of `svn log -v` (`/branches/X/...`) can be passed as-is
+- **`getRepositoryRoot()`**: on first need, runs `svn info <SVN_REPO_URL>` once, parses `Repository Root: ...`, and caches it in `this.repositoryRoot`. No re-fetching afterwards
+- Every method **returns svn's raw stdout string as-is** (no parsing; the LLM can read it as text)
 
 ### `external/diff-tool.ts`
 - `showDiffExternal(svn, config, args)`:
-  1. `svn.cat(revisionBefore, path)` と `svn.cat(revisionAfter, path)` で 2 リビジョンの内容を取得
-  2. `os.tmpdir() + svn-mcp-diff-XXXX/` に左右ファイルを書き出し（`r<rev>_<basename>` 命名）
-  3. `spawn(toolPath, [leftFile, rightFile], { detached: true, stdio: "ignore" })` で GUI 起動
-  4. `child.unref()` でツール終了を待たずに `{ leftFile, rightFile, tool, pid }` を返す
-- **MCP サーバはホスト OS（Windows/macOS）で動かす必要がある**（Docker 内では GUI が出ない）
+  1. Fetches the contents of both revisions with `svn.cat(revisionBefore, path)` and `svn.cat(revisionAfter, path)`
+  2. Writes left/right files to `os.tmpdir() + svn-mcp-diff-XXXX/` (named `r<rev>_<basename>`)
+  3. Launches the GUI with `spawn(toolPath, [leftFile, rightFile], { detached: true, stdio: "ignore" })`
+  4. `child.unref()` and returns `{ leftFile, rightFile, tool, pid }` without waiting for the tool to exit
+- **The MCP server must run on the host OS (Windows/macOS)** (a GUI launched inside Docker is not visible)
 
 ### `external/tortoise.ts`
 - `showLogInTortoise(config, fallbackBaseUrl, args)`:
-  1. `config.clientRepoBase`（未設定なら `fallbackBaseUrl` = `SvnConfig.repoUrl`）と `args.path` を連結してターゲットパスを作る
-  2. `spawn(procPath, ["/command:log", "/path:<target>", "/closeonend:0"], { detached: true })` で TortoiseProc.exe 起動
-  3. `child.unref()` でツール終了を待たずに `{ tool, pid, targetPath }` を返す
-- **Windows ホスト前提**。`SVN_REPO_URL` が Docker 内 `file://` のように Windows から見えない場合は、`SVN_REPO_URL_CLIENT` で Windows 到達可能な URL/作業コピーを別途指定する
+  1. Builds the target path by joining `config.clientRepoBase` (falls back to `fallbackBaseUrl` = `SvnConfig.repoUrl` when unset) with `args.path`
+  2. Launches TortoiseProc.exe with `spawn(procPath, ["/command:log", "/path:<target>", "/closeonend:0"], { detached: true })`
+  3. `child.unref()` and returns `{ tool, pid, targetPath }` without waiting for the tool to exit
+- **Assumes a Windows host**. If `SVN_REPO_URL` is not reachable from Windows (e.g. a `file://` path inside Docker), specify a Windows-reachable URL / working copy separately via `SVN_REPO_URL_CLIENT`
 
 ### `external/explorer.ts`
 - `openInExplorer(config, args)`:
-  1. `config.workingCopyPath` と `args.path` を `path.join` で連結
-  2. `fs.statSync(target, { throwIfNoEntry: false })` でファイル／フォルダ判定
-  3. ファイルなら `spawn("explorer.exe", ["/select,<target>"])`、フォルダなら `spawn("explorer.exe", ["<target>"])`
-  4. `detached: true` + `child.unref()` で即時応答
-- **Windows 専用**。`SVN_WORKING_COPY` を `SVN_REPO_URL_CLIENT`（Tortoise 用）と分けているのは、Tortoise が URL も受け付けるのに対し Explorer はローカルパス専用だから
+  1. Joins `config.workingCopyPath` and `args.path` with `path.join`
+  2. Determines file vs. folder with `fs.statSync(target, { throwIfNoEntry: false })`
+  3. For a file: `spawn("explorer.exe", ["/select,<target>"])`; for a folder: `spawn("explorer.exe", ["<target>"])`
+  4. `detached: true` + `child.unref()` for an immediate response
+- **Windows only**. `SVN_WORKING_COPY` is kept separate from `SVN_REPO_URL_CLIENT` (for Tortoise) because Tortoise also accepts URLs, whereas Explorer only accepts local paths
 
-### `tools/context.ts`（共通基盤）
-- `ToolContext` 型: `{ svn: SvnClient; diffTool?: DiffToolConfig }`
-- `ToolResult` 型と 3 つのヘルパー:
-  - `textResult(text)` — プレーンテキスト応答
-  - `jsonResult(data)` — JSON.stringify した応答（`show_diff_external` で使用）
-  - `errorResult(message, detail?)` — `isError: true` 付き応答
+### `tools/context.ts` (shared infrastructure)
+- `ToolContext` type: `{ svn: SvnClient; diffTool?: DiffToolConfig }`
+- `ToolResult` type and 3 helpers:
+  - `textResult(text)` — plain-text response
+  - `jsonResult(data)` — JSON.stringify-ed response (used by `show_diff_external`)
+  - `errorResult(message, detail?)` — response with `isError: true`
 
-### `tools/*.ts`（各ツール）
-- 1 ファイル 1 ツール
-- `register(server: McpServer, ctx: ToolContext)` をエクスポート
-- 中で `server.registerTool(name, { title, description, inputSchema }, handler)` を呼ぶ
-- `SvnError` を `errorResult` で包む共通パターン
+### `tools/*.ts` (each tool)
+- One file per tool
+- Exports `register(server: McpServer, ctx: ToolContext)`
+- Inside, calls `server.registerTool(name, { title, description, inputSchema }, handler)`
+- Common pattern of wrapping `SvnError` in `errorResult`
 
-## 6. ツールの実装パターン
+## 6. Tool implementation pattern
 
-全ツールが同じ形：
+Every tool has the same shape:
 
 ```typescript
 import { z } from "zod";
@@ -153,15 +153,15 @@ import { SvnError } from "../svn/client.js";
 import { textResult, errorResult, type ToolContext } from "./context.js";
 
 const inputShape = {
-  someArg: z.string().optional().describe("引数の説明（LLM が読む）"),
+  someArg: z.string().optional().describe("Description of the argument (read by the LLM)"),
 };
 
 export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "tool_name",
     {
-      title: "人間向けの短い名前",
-      description: "LLM 向けの詳しい説明。いつ・どう使うかを書く。",
+      title: "Short human-readable name",
+      description: "Detailed description for the LLM. Say when and how to use it.",
       inputSchema: inputShape,
     },
     async (args) => {
@@ -179,84 +179,84 @@ export function register(server: McpServer, ctx: ToolContext) {
 }
 ```
 
-## 7. 重要な仕組み
+## 7. Key mechanisms
 
-### 読み取り専用の保証
+### Read-only guarantee
 
-破壊的サブコマンドが LLM の生成ミスやプロンプトインジェクションで紛れ込んでも実行されないよう、`SvnClient.execSvn()` 入口で `READ_ONLY_SUBCOMMANDS` allowlist と照合する。新しいツールを追加する場合は、ここに必要なサブコマンドがあるか確認すること（無ければ allowlist を**広げるのではなく**、本当に読み取り系か検討する）。
+So that a destructive subcommand cannot run even if it sneaks in through an LLM generation mistake or prompt injection, `SvnClient.execSvn()` checks against the `READ_ONLY_SUBCOMMANDS` allowlist at its entry point. When adding a new tool, check whether the subcommand it needs is there (if not, **do not widen** the allowlist — instead reconsider whether it is truly a read-only operation).
 
-### Docker モード
+### Docker mode
 
-`useDocker=true` のとき、`docker compose exec -T <service> svn ...` 形式で実行する：
-- `-T` は TTY 割り当てなし（spawn から動かすときに必要）
-- `cwd` を `composeDir` に設定して `docker compose` がそのディレクトリの compose ファイルを参照する
-- サービス内に **svn コマンドが入っている**必要がある（無ければ Dockerfile に `apt-get install -y subversion` 等を追加）
+With `useDocker=true`, commands run in the form `docker compose exec -T <service> svn ...`:
+- `-T` means no TTY allocation (required when driving from spawn)
+- `cwd` is set to `composeDir` so that `docker compose` picks up the compose file in that directory
+- The service must **contain the svn command** (if not, add `apt-get install -y subversion` or similar to the Dockerfile)
 
-### 外部差分ツール起動の制約
+### Constraints on launching the external diff tool
 
-- ホスト OS で MCP サーバを動かしていないと GUI は出ない（Docker 内で起動した GUI はユーザーから見えない）
-- `SVN_EXTERNAL_DIFF_TOOL` 未設定なら `show_diff_external` ツールは登録されるが、呼び出すと「未設定です」のエラーを返す（他のツールは普通に動く）
-- 一時ファイルは `os.tmpdir()` に作られ、OS のクリーンアップに任せる（明示的削除はしない。WinMerge 等が掴んでいる間に消すと不具合になるため）
+- The GUI will not appear unless the MCP server runs on the host OS (a GUI launched inside Docker is not visible to the user)
+- If `SVN_EXTERNAL_DIFF_TOOL` is unset, the `show_diff_external` tool is still registered but returns a "not configured" error when called (the other tools work normally)
+- Temp files are created in `os.tmpdir()` and left to OS cleanup (no explicit deletion — deleting them while WinMerge etc. still holds them causes problems)
 
-### `svn diff` の指定方法
+### Ways to specify `svn diff`
 
-3 通りある:
-- **`changeRev` のみ**: 単一リビジョンの差分（`svn diff -c REV`）
-- **`fromRev` + `toRev`**: 範囲の差分（`svn diff -r FROM:TO`）
-- 両方無指定: working copy の差分（Docker 経由・URL 指定の運用では普通使わない）
+There are 3:
+- **`changeRev` only**: diff of a single revision (`svn diff -c REV`)
+- **`fromRev` + `toRev`**: diff of a range (`svn diff -r FROM:TO`)
+- Neither: working-copy diff (not normally used in Docker / URL-based operation)
 
-ツール側（`tools/svn-diff.ts`）で「`change_rev` か `from_rev`+`to_rev` のどちらか必須」をランタイムでバリデーションしている（zod だけでは表現しきれない条件）。
+The tool side (`tools/svn-diff.ts`) validates at runtime that "either `change_rev` or `from_rev`+`to_rev` is required" (a condition zod alone cannot express).
 
-## 8. 拡張方法
+## 8. How to extend
 
-### 新しい読み取り系ツールを追加する
+### Add a new read-only tool
 
-例: `svn_blame` を追加したい場合
+Example: adding `svn_blame`
 
-1. `src/svn/client.ts` の `SvnClient` に `blame(rev, path)` メソッドを追加（`READ_ONLY_SUBCOMMANDS` には `blame` が既にある）
-2. `src/tools/svn-blame.ts` を作成（`svn-info.ts` を雛形にすると最短）
-3. `register(server, ctx)` をエクスポート
-4. `src/index.ts` に import と `register()` 呼び出しを追加
-5. `docs/TOOLS.md` に仕様を追記
+1. Add a `blame(rev, path)` method to `SvnClient` in `src/svn/client.ts` (`blame` is already in `READ_ONLY_SUBCOMMANDS`)
+2. Create `src/tools/svn-blame.ts` (using `svn-info.ts` as a template is quickest)
+3. Export `register(server, ctx)`
+4. Add the import and `register()` call to `src/index.ts`
+5. Add the specification to `docs/TOOLS.md`
 6. `npm run build`
 
-### 書き込み系を追加したくなったら（注意）
+### If you are tempted to add write operations (caution)
 
-設計上、書き込み系は実装しないことになっている（「AI に誤更新させない」）。どうしても必要な場合は：
+By design, write operations are not implemented ("do not let the AI make accidental changes"). If you absolutely must:
 
-- `READ_ONLY_SUBCOMMANDS` の名前と思想を変更することになる → コードの安全境界がなくなる
-- 別バイナリ（`svn-mcp-write` 等）として完全に分離する方が安全
-- 認証情報の扱い（commit には credential が要る）が増える
+- You would have to change the name and philosophy of `READ_ONLY_SUBCOMMANDS` → the code's safety boundary disappears
+- It is safer to fully separate it as a different binary (e.g. `svn-mcp-write`)
+- Credential handling increases (commit needs credentials)
 
-### Docker サービス名を可変にしたい
+### Making the Docker service name variable
 
-現状 `SVN_DOCKER_SERVICE` で 1 サービス固定。複数リポを別サービスで管理するなら、ツール引数に `service` を追加して `SvnClient` に渡す API 変更が要る（現状はそこまでの需要がないので未対応）。
+Currently `SVN_DOCKER_SERVICE` fixes a single service. To manage multiple repositories as separate services, you would need an API change adding a `service` tool argument passed through to `SvnClient` (not implemented since there is no demand for it yet).
 
-## 9. 変更時の注意点（ハマりどころ）
+## 9. Things to watch when changing code (pitfalls)
 
-- **description を更新し忘れない**：挙動を変えたらツールの `description` も直す。LLM はそれを読んで動くので、ズレると誤動作する。
-- **`READ_ONLY_SUBCOMMANDS` を緩めない**：新しいサブコマンドを追加するときは「これは本当に副作用がないか？」を確認する。`update` / `revert` / `merge` 等はワーキングコピーを変える。
-- **Docker モードの cwd**：`SVN_COMPOSE_DIR` が無いと `docker compose` がエラー。`useDocker=true` のときは必須。
-- **タイムアウト**：`SVN_TIMEOUT_MS` 既定 30 秒。大きなリポジトリの `svn list -R` や長い `svn log` ではこれが効くので、必要なら `.env` で延ばす。
-- **GUI ツール起動はホスト OS で**：MCP サーバを WSL や Docker で動かしていると WinMerge は起動するが、Windows 側に表示されない。
-- **stdout は UTF-8 として読む**：バイナリファイルを `svn_cat` で取ると文字化けする。`svn_cat` の description にも警告あり。バイナリ判定機能は持っていない（呼ぶ側が拡張子等で判断する）。
-- **個人情報を書かない**：git 追跡されるファイル（src・docs・README・`.env.example`）に実フォルダパス・実リポ名・実ホスト名を書かない。`.env`（追跡対象外）に閉じ込める。
+- **Do not forget to update descriptions**: when behavior changes, fix the tool's `description` too. The LLM acts on it, so a mismatch causes misbehavior.
+- **Do not loosen `READ_ONLY_SUBCOMMANDS`**: when adding a new subcommand, ask "does this really have no side effects?" `update` / `revert` / `merge` etc. modify the working copy.
+- **cwd in Docker mode**: without `SVN_COMPOSE_DIR`, `docker compose` errors out. It is required when `useDocker=true`.
+- **Timeout**: `SVN_TIMEOUT_MS` defaults to 30 seconds. It kicks in for `svn list -R` on large repositories or long `svn log` runs, so extend it in `.env` if needed.
+- **Launch GUI tools on the host OS**: if the MCP server runs in WSL or Docker, WinMerge launches but does not appear on the Windows side.
+- **stdout is read as UTF-8**: fetching a binary file with `svn_cat` yields garbage. The `svn_cat` description also warns about this. There is no binary detection (the caller decides by extension etc.).
+- **Do not write personal information**: do not put real folder paths, real repository names, or real host names in git-tracked files (src, docs, README, `.env.example`). Confine them to `.env` (untracked).
 
-## 10. 動作確認
+## 10. Verification
 
 ```bash
-npm run build         # ビルド（tsc）
-npm run typecheck     # 型チェックのみ
+npm run build         # build (tsc)
+npm run typecheck     # type check only
 
-# 実 SVN に対する疎通テスト（.env が必要）
-npm run dev           # tsx で起動、stdin/stdout で MCP プロトコル待機
+# Connectivity test against a real SVN (requires .env)
+npm run dev           # start with tsx; waits for the MCP protocol on stdin/stdout
 ```
 
-`npm run dev` で起動すると stderr に `[svn-mcp] started (repo=..., docker=...)` が出る。`SVN_EXTERNAL_DIFF_TOOL` 未設定なら `show_diff_external は利用不可` の警告も出る。
+Starting with `npm run dev` prints `[svn-mcp] started (repo=..., docker=...)` on stderr. If `SVN_EXTERNAL_DIFF_TOOL` is unset, a warning that `show_diff_external` is unavailable is also printed.
 
-## 11. 制約
+## 11. Constraints
 
-- **読み取り専用**: 設計上の意図。書き込み API は実装しない
-- **Docker モード**: `docker compose` v2 を想定。`docker-compose`（v1）には未対応
-- **GUI 起動**: MCP サーバがホスト OS で動いている必要あり（Docker / WSL2 内では別途設定要）
-- **UTF-8 前提**: `svn cat` の出力は UTF-8 として読む。バイナリ・他エンコーディングのファイルは扱えない
+- **Read-only**: by design. No write API is implemented
+- **Docker mode**: assumes `docker compose` v2. `docker-compose` (v1) is not supported
+- **GUI launch**: the MCP server must be running on the host OS (extra setup is needed inside Docker / WSL2)
+- **UTF-8 assumed**: the output of `svn cat` is read as UTF-8. Binary files and other encodings cannot be handled
