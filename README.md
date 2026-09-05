@@ -143,13 +143,7 @@ npm run smoke
 This actually calls the main tools (svn_describe / svn_info / svn_list / svn_log / find_path) over the MCP protocol and reports PASS/FAIL.
 It is an end-to-end check that includes the real connection to the SVN server, so use it for initial setup and after refactoring.
 
-If `SVN_EXTERNAL_DIFF_TOOL` is unset, you will also see this line:
-```
-[svn-mcp] SVN_EXTERNAL_DIFF_TOOL 未設定: show_diff_external は利用不可
-```
-(meaning: `SVN_EXTERNAL_DIFF_TOOL` not set: `show_diff_external` is unavailable)
-
-This is just a warning; the other tools work normally.
+If `SVN_EXTERNAL_DIFF_TOOL` is unset, an extra startup line warns that `show_diff_external` is unavailable. This is just a warning; the other tools work normally.
 
 If you cannot connect, see [Troubleshooting](#troubleshooting).
 
@@ -310,15 +304,13 @@ Combined with an MCP server for an external ticketing tool, a flow like "file pa
 
 ## Troubleshooting
 
-The first five rows quote the actual error text emitted by the server (currently in Japanese), with an English gloss.
-
 | Symptom | Fix |
 |---|---|
-| `SVN_REPO_URL が設定されていません` (SVN_REPO_URL is not set) | Create / edit `.env` |
-| `SVN_USE_DOCKER=true のとき SVN_COMPOSE_DIR の指定が必要です` (SVN_COMPOSE_DIR is required when SVN_USE_DOCKER=true) | Add `SVN_COMPOSE_DIR=...` to `.env` |
+| Startup error saying `SVN_REPO_URL` is not set | Create / edit `.env` |
+| Startup error saying `SVN_COMPOSE_DIR` is required when `SVN_USE_DOCKER=true` | Add `SVN_COMPOSE_DIR=...` to `.env` |
 | `svn: E170000: URL '...' non-existent in revision N` | `SVN_REPO_URL` is wrong, or the given path does not exist. Check with `svn_info` |
-| `svn コマンドが Nms でタイムアウトしました` (svn command timed out after N ms) | Increase `SVN_TIMEOUT_MS`, or drop `recursive` / reduce `limit` |
-| `svn-mcp は読み取り専用です。サブコマンド '...' は許可されていません` (svn-mcp is read-only; subcommand '...' is not allowed) | Working as designed. Do write operations with another tool |
+| The svn command times out after N ms | Increase `SVN_TIMEOUT_MS`, or drop `recursive` / reduce `limit` |
+| Error saying svn-mcp is read-only and the subcommand is not allowed | Working as designed. Do write operations with another tool |
 | `docker compose exec` does not work | Check that `SVN_COMPOSE_DIR` is the directory containing compose.yml. Verify with `docker compose -f <that dir>/compose.yml ps` |
 | The Docker container has no svn | Add `apt-get install -y subversion` or similar to the Dockerfile and rebuild |
 | `show_diff_external` / `show_log_tortoise` / `open_in_explorer` reports "not configured" | Add the corresponding `SVN_EXTERNAL_DIFF_TOOL` / `SVN_TORTOISE_PROC` / `SVN_WORKING_COPY` to `.env` |
