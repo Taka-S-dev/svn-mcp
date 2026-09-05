@@ -18,7 +18,7 @@ const inputShape = {
   path: z
     .string()
     .describe(
-      "リポジトリ内の相対パス（例: trunk/src/core/state_manager.cpp）。",
+      "リポジトリ内の相対パス（例: trunk/src/foo.cpp）。",
     ),
 };
 

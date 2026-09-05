@@ -25,7 +25,7 @@ const inputShape = {
     .string()
     .optional()
     .describe(
-      "差分対象を特定のパスに絞る（例: trunk/src/core/state_manager.cpp）。" +
+      "差分対象を特定のパスに絞る（例: trunk/src/foo.cpp）。" +
         "省略時はリビジョンの全変更を取得。",
     ),
 };

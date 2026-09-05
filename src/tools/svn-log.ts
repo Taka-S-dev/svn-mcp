@@ -7,7 +7,7 @@ const inputShape = {
     .string()
     .optional()
     .describe(
-      "リポジトリ内の相対パス（例: trunk/src/core/state_manager.cpp）。" +
+      "リポジトリ内の相対パス（例: trunk/src/foo.cpp）。" +
         "指定すると、そのパスに対する変更履歴のみが返る。省略時はリポジトリ全体。",
     ),
   limit: z
